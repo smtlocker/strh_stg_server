@@ -27,8 +27,8 @@ export class MonitoringAuthService {
       'smartcube_monitoring_session';
     const configuredTtl =
       this.config.get<number>('monitoringAuth.sessionTtlMs') ??
-      8 * 60 * 60 * 1000;
-    this.sessionTtlMs = configuredTtl > 0 ? configuredTtl : 8 * 60 * 60 * 1000;
+      24 * 60 * 60 * 1000;
+    this.sessionTtlMs = configuredTtl > 0 ? configuredTtl : 24 * 60 * 60 * 1000;
     this.cookieSecurePolicy = this.normalizeCookieSecurePolicy(
       this.config.get<string>('monitoringAuth.cookieSecure'),
     );
@@ -80,6 +80,8 @@ export class MonitoringAuthService {
       this.sessions.delete(sessionId);
       return null;
     }
+    // 슬라이딩 세션: 요청마다 만료 시간 갱신
+    session.expiresAt = Date.now() + this.sessionTtlMs;
     return session;
   }
 

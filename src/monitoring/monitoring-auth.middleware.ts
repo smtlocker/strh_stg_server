@@ -9,6 +9,8 @@ export class MonitoringSessionMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
     const session = this.auth.getSessionFromRequest(req);
     if (session) {
+      // 슬라이딩 세션: 쿠키 만료도 갱신
+      this.auth.setSessionCookie(res, req, session.id);
       next();
       return;
     }

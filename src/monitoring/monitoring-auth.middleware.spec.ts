@@ -22,7 +22,8 @@ const createResponse = (): Partial<Response> & {
 describe('MonitoringSessionMiddleware', () => {
   it('passes through authenticated requests', () => {
     const auth = {
-      getSessionFromRequest: jest.fn().mockReturnValue({ mgrId: 'admin' }),
+      getSessionFromRequest: jest.fn().mockReturnValue({ id: 'sess-1', mgrId: 'admin' }),
+      setSessionCookie: jest.fn(),
       clearSessionCookie: jest.fn(),
     } as unknown as MonitoringAuthService;
     const middleware = new MonitoringSessionMiddleware(auth);
