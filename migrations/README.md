@@ -32,6 +32,7 @@ DRY_RUN=false node migrations/003-upsert-unit-smartcube-ids.js
 | 003 | `003-upsert-unit-smartcube-ids.js` | STG 유닛 smartcube_id 매핑 |
 | 004 | `004-migrate-stg-user-ids.js` | STG 사용자 ID 매핑 |
 | 005 | `005-reconcile-pti-per-unit.js` | PTI 정합성 보정 |
+| 006 | `006-site-sync.js` | STG ↔ DB 전체 사이트 동기화 |
 
 ## 사이트-지점 매핑
 

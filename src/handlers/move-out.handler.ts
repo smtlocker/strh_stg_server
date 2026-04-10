@@ -391,6 +391,13 @@ export class MoveOutHandler implements WebhookHandler {
         }>(`SELECT useState, ISNULL(isOverlocked, 0) AS isOverlocked, userPhone, userCode, userName FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`);
 
       cancelledRow = unitResult.recordset[0];
+      if (!cancelledRow) {
+        await safeRollback(transaction);
+        return {
+          areaCode, showBoxNo,
+          softError: `Unit not found in DB: ${areaCode}:${showBoxNo}`,
+        };
+      }
       const wasBlocked =
         cancelledRow?.useState === 3 &&
         (cancelledRow?.isOverlocked ?? 0) === 0;

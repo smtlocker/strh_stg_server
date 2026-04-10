@@ -139,7 +139,37 @@ export class TransferHandler implements WebhookHandler {
       // 정상이면 useState=1. 게이트는 이후 setPtiUserEnableAllForGroup 에서 일관화.
       const inheritedUseState = inheritedOverlocked === 1 ? 3 : 1;
 
-      // 5-2. 신규유닛 배정 (즉시 활성, startTime=오늘00시, Q2 상태 승계)
+      // 5-2. 신규 유닛 존재 + 중복 입주 가드
+      const newBoxCheck = await new sql.Request(transaction)
+        .input('areaCode', sql.NVarChar, newAreaCode)
+        .input('showBoxNo', sql.Int, newShowBoxNo)
+        .query<{ useState: number; userCode: string }>(`
+          SELECT ISNULL(useState, 0) AS useState, ISNULL(userCode, '') AS userCode
+          FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
+        `);
+      const newBoxRow = newBoxCheck.recordset[0];
+      if (!newBoxRow) {
+        await safeRollback(transaction);
+        return {
+          areaCode: newAreaCode, showBoxNo: newShowBoxNo, stgUserId: ownerId,
+          softError: `Transfer target unit not found: ${newAreaCode}:${newShowBoxNo}`,
+        };
+      }
+      const targetUserCode = newBoxRow.userCode;
+      if (
+        newBoxRow.useState === 1 &&
+        targetUserCode &&
+        targetUserCode !== ownerId &&
+        /^[a-f0-9]{24}$/.test(targetUserCode)
+      ) {
+        await safeRollback(transaction);
+        return {
+          areaCode: newAreaCode, showBoxNo: newShowBoxNo, stgUserId: ownerId,
+          softError: `Transfer target already occupied by ${targetUserCode}: ${newAreaCode}:${newShowBoxNo}`,
+        };
+      }
+
+      // 신규유닛 배정 (즉시 활성, startTime=오늘00시, Q2 상태 승계)
       const req1 = new sql.Request(transaction);
       req1.input('userCode', sql.NVarChar, ownerId);
       req1.input('userName', sql.NVarChar, userName);

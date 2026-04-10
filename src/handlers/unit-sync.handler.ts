@@ -382,7 +382,7 @@ export class UnitSyncHandler implements WebhookHandler {
       req.input('startTime', sql.NVarChar, startTime);
       req.input('endTime', sql.NVarChar, endTime);
       req.input('isOverlocked', sql.Bit, isOverlocked ? 1 : 0);
-      await req.query(`
+      const updateResult = await req.query(`
         UPDATE tblBoxMaster
         SET
           useState      = @useState,
@@ -395,6 +395,10 @@ export class UnitSyncHandler implements WebhookHandler {
           updateTime    = GETDATE()
         WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
       `);
+      if ((updateResult.rowsAffected?.[0] ?? 0) === 0) {
+        await safeRollback(transaction);
+        throw new Error(`Unit not found in DB: ${areaCode}:${showBoxNo} — smartcube_id 매핑 오류`);
+      }
 
       // PTI upsert (이 유닛의 PTI row)
       await upsertPtiUserForUnit(transaction, {
@@ -548,6 +552,10 @@ export class UnitSyncHandler implements WebhookHandler {
         );
 
       const currentBox = currentBoxResult.recordset[0];
+      if (!currentBox) {
+        await safeRollback(transaction);
+        throw new Error(`Unit not found in DB: ${areaCode}:${showBoxNo} — smartcube_id 매핑 오류`);
+      }
       const currentUserPhone = normalizePhone(currentBox?.userPhone ?? '');
       const currentStgUserId = currentBox?.userCode || undefined;
 

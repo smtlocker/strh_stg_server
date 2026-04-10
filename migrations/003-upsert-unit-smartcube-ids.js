@@ -81,22 +81,21 @@ async function main() {
   const pool = await sql.connect(dbConfig);
 
   // DB 매핑 테이블 빌드
-  // 목표: STG unit.name (= showBoxNo와 동일) → { areaCode, showBoxNo, groupCode }
-  // tblBoxMaster의 showBoxNo가 곧 STG unit.name이므로 showBoxNo를 키로 삼는다.
+  // tblShowBoxNoDispInfo의 showBoxNoDisp가 STG unit.name과 1:1 매칭.
+  // showBoxNoDisp(case-insensitive) → { areaCode, showBoxNo, groupCode }
   const dbRows = await pool.request().query(
-    `SELECT areaCode, showBoxNo FROM tblBoxMaster WHERE showBoxNo IS NOT NULL`,
+    `SELECT areaCode, showBoxNo, showBoxNoDisp, groupCode FROM tblShowBoxNoDispInfo WHERE showBoxNoDisp IS NOT NULL`,
   );
 
-  // officeCode → { showBoxNoString → { areaCode, showBoxNo, groupCode } }
+  // officeCode → { showBoxNoDisp(lowercase) → { areaCode, showBoxNo, groupCode } }
   const dbMap = {};
   for (const row of dbRows.recordset) {
     const ac = row.areaCode;
     if (!ac || ac.length < 8) continue;
     const oc = ac.slice(4, 7); // officeCode (3자리)
-    const gc = ac.slice(7);    // groupCode
     if (!dbMap[oc]) dbMap[oc] = {};
-    const key = String(row.showBoxNo);
-    dbMap[oc][key] = { areaCode: ac, showBoxNo: row.showBoxNo, groupCode: gc };
+    const key = String(row.showBoxNoDisp).toLowerCase();
+    dbMap[oc][key] = { areaCode: ac, showBoxNo: row.showBoxNo, groupCode: row.groupCode };
   }
 
   let grandTotal = { total: 0, updated: 0, created: 0, skipped: 0, noMatch: 0, failed: 0 };
@@ -116,13 +115,8 @@ async function main() {
       const unitName = unit.name || '';
       const currentId = unit.customFields?.smartcube_id || '';
 
-      // DB에서 unit.name (= showBoxNo) 매칭
-      // unit.name은 문자열이지만 showBoxNo는 INT라 key가 양쪽 다 필요할 수 있음.
-      let match = siteMap[unitName] || null;
-      if (!match) {
-        const numName = parseInt(unitName, 10);
-        if (!isNaN(numName)) match = siteMap[String(numName)] || null;
-      }
+      // DB에서 unit.name → showBoxNoDisp (case-insensitive) 매칭
+      const match = siteMap[unitName.toLowerCase()] || null;
 
       if (!match) {
         // DB에 이 unit이 없음. 운영자 수동 개입 필요 (showBoxNo 정합성 체크 결과와 동일).

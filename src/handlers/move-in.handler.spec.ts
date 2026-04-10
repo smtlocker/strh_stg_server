@@ -101,7 +101,7 @@ describe('MoveInHandler', () => {
 
     jest.clearAllMocks();
     mockInput.mockReturnThis();
-    mockQuery.mockResolvedValue({ recordset: [], rowsAffected: [1] });
+    mockQuery.mockResolvedValue({ recordset: [{ useState: 2, userCode: '' }], rowsAffected: [1] });
     (findExistingAccessCode as jest.Mock).mockResolvedValue(null);
     (
       require('../common/db-utils').generateUniqueAccessCode as jest.Mock
@@ -357,6 +357,7 @@ describe('MoveInHandler', () => {
       setupStgMocks(undefined);
       // Blocker check returns 1 overlocked unit
       mockQuery
+        .mockResolvedValueOnce({ recordset: [{ useState: 2, userCode: '' }], rowsAffected: [1] }) // 유닛 존재 가드
         .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] }) // tblBoxMaster UPDATE
         .mockResolvedValueOnce({ recordset: [{ cnt: 1 }], rowsAffected: [1] }); // blocker check
 

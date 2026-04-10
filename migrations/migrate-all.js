@@ -58,6 +58,7 @@ const steps = [
   { name: '003 STG 유닛 ID 매핑', cmd: `DRY_RUN=false node migrations/003-upsert-unit-smartcube-ids.js` },
   { name: '004 STG 사용자 ID 매핑', cmd: `DRY_RUN=false node migrations/004-migrate-stg-user-ids.js` },
   { name: '005 PTI 정합성 보정', cmd: `DRY_RUN=false node migrations/005-reconcile-pti-per-unit.js` },
+  { name: '006 전체 사이트 동기화', cmd: `DRY_RUN=false node migrations/006-site-sync.js` },
 ];
 
 const stepResults = [];
@@ -133,6 +134,36 @@ for (const line of noAcLines) {
 }
 const noAcCount = noAcLines.length;
 
+// 006 NO_SMARTCUBE_ID (STG에만 존재, DB 매핑 없음)
+const noIdLines = allOutput.split('\n').filter(l => l.includes('SKIP:NO_SMARTCUBE_ID'));
+const noIdCsv = path.join(LOGS_DIR, `006-no-smartcube-id-${ts}.csv`);
+fs.writeFileSync(noIdCsv, 'site,unitName,unitId,stgState\n');
+for (const line of noIdLines) {
+  const m = line.match(/NO_SMARTCUBE_ID\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/);
+  if (m) fs.appendFileSync(noIdCsv, `${m[1]},${m[2]},${m[3]},${m[4]}\n`);
+}
+const noIdCount = noIdLines.length;
+
+// 006 DB_ONLY_OCCUPIED (STG에 rental 없지만 DB에 입주 데이터)
+const dbOnlyLines = allOutput.split('\n').filter(l => l.includes('SKIP:DB_ONLY_OCCUPIED'));
+const dbOnlyCsv = path.join(LOGS_DIR, `006-db-only-occupied-${ts}.csv`);
+fs.writeFileSync(dbOnlyCsv, 'site,areaCode,showBoxNo,unitName,stgState,dbUserCode,dbUserName\n');
+for (const line of dbOnlyLines) {
+  const m = line.match(/DB_ONLY_OCCUPIED\]\s+([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|(.+)/);
+  if (m) fs.appendFileSync(dbOnlyCsv, `${m[1]},${m[2]},${m[3]},${m[4]},${m[5]},${m[6]},"${m[7]}"\n`);
+}
+const dbOnlyCount = dbOnlyLines.length;
+
+// 006 FAIL:SYNC
+const syncFailLines = allOutput.split('\n').filter(l => l.includes('FAIL:SYNC'));
+const syncFailCsv = path.join(LOGS_DIR, `006-sync-failed-${ts}.csv`);
+fs.writeFileSync(syncFailCsv, 'site,unitName,smartcubeId,error\n');
+for (const line of syncFailLines) {
+  const m = line.match(/FAIL:SYNC\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/);
+  if (m) fs.appendFileSync(syncFailCsv, `${m[1]},${m[2]},${m[3]},"${m[4]}"\n`);
+}
+const syncFailCount = syncFailLines.length;
+
 // ── 보고서 생성 ──
 const dbName = process.env.DB_NAME || '(unknown)';
 const dbHost = process.env.DB_HOST || '(unknown)';
@@ -171,6 +202,24 @@ PTI에 등록되어 있으나 AccessCode가 없는 사용자. 서버 가동 후 
 
 파일: \`005-no-access-code-${ts}.csv\`
 
+### 006: smartcube_id 미설정 (${noIdCount}건)
+
+STG에 유닛이 존재하지만 smartcube_id가 설정되지 않아 DB와 매핑 불가. 003 단계에서 매핑되지 않은 유닛.
+
+파일: \`006-no-smartcube-id-${ts}.csv\`
+
+### 006: DB에만 입주 데이터 존재 (${dbOnlyCount}건)
+
+STG에는 rental이 없지만 DB에 입주 상태(useState=1)인 유닛. 기존 호호락 데이터일 수 있으므로 동기화에서 제외됨. 수동 확인 필요.
+
+파일: \`006-db-only-occupied-${ts}.csv\`
+
+### 006: 동기화 실패 (${syncFailCount}건)
+
+사이트 동기화 중 에러가 발생한 유닛. 수동 재동기화 필요.
+
+파일: \`006-sync-failed-${ts}.csv\`
+
 ## 상세 로그
 
 \`logs/migrate-${ts}.log\`
@@ -182,5 +231,8 @@ log(`보고서: ${reportFile}`);
 log(`CSV: ${ambiguousCsv} (${ambiguousCount}건)`);
 log(`CSV: ${mismatchCsv} (${mismatchCount}건)`);
 log(`CSV: ${noAcCsv} (${noAcCount}건)`);
+log(`CSV: ${noIdCsv} (${noIdCount}건)`);
+log(`CSV: ${dbOnlyCsv} (${dbOnlyCount}건)`);
+log(`CSV: ${syncFailCsv} (${syncFailCount}건)`);
 
 process.exit(failed ? 1 : 0);

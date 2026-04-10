@@ -126,7 +126,39 @@ export class MoveInHandler implements WebhookHandler {
         `[moveIn.completed] accessCode=${accessCode} (generated=${accessCodeGenerated}, existing=${!!existingAccessCode})`,
       );
 
-      // 4-2. UPDATE tblBoxMaster — startDate가 오늘 이하면 즉시 활성화, 미래면 차단
+      // 4-2. 유닛 존재 + 중복 입주 가드
+      const boxCheck = await new sql.Request(transaction)
+        .input('areaCode', sql.NVarChar, areaCode)
+        .input('showBoxNo', sql.Int, showBoxNo)
+        .query<{ useState: number; userCode: string }>(`
+          SELECT ISNULL(useState, 0) AS useState, ISNULL(userCode, '') AS userCode
+          FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
+        `);
+      const existingRow = boxCheck.recordset[0];
+      if (!existingRow) {
+        await safeRollback(transaction);
+        return {
+          areaCode, showBoxNo, stgUserId: ownerId,
+          softError: `Unit not found in DB: ${areaCode}:${showBoxNo} — smartcube_id 매핑 오류 가능`,
+        };
+      }
+      // 중복 입주 가드: stgUserId 형태(24자 hex)의 다른 사용자가 입주 중일 때만 차단.
+      // 기존 호호락 데이터(전화번호 형태 userCode)는 STG 전환 과정에서 덮어쓰기 허용.
+      const existingUserCode = existingRow.userCode;
+      if (
+        existingRow.useState === 1 &&
+        existingUserCode &&
+        existingUserCode !== ownerId &&
+        /^[a-f0-9]{24}$/.test(existingUserCode)
+      ) {
+        await safeRollback(transaction);
+        return {
+          areaCode, showBoxNo, stgUserId: ownerId,
+          softError: `Unit already occupied by ${existingUserCode}: ${areaCode}:${showBoxNo}`,
+        };
+      }
+
+      // UPDATE tblBoxMaster — startDate가 오늘 이하면 즉시 활성화, 미래면 차단
       const startTime = startDate ? `${startDate} 00:00:00` : null;
       const isImmediate =
         !startDate || new Date(`${startDate}T00:00:00`) <= new Date();
