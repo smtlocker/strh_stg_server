@@ -67,7 +67,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-call npx nest build
+call npm run build
 if errorlevel 1 (
     echo ERROR: 빌드 실패
     pause
