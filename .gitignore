@@ -1,0 +1,52 @@
+# compiled output
+/dist
+/build
+
+# dependencies
+node_modules/
+
+# env
+.env
+.env.*
+!.env.example
+!.env.e2e.example
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Portable Node.js
+.node/
+
+# OMC / tooling
+.omc/
+.omx/
+*.zip
+tmp/
+
+# docs (내부 참조용, git 미추적)
+docs/
+
+# e2e (Playwright 테스트, 로컬 전용)
+e2e/
+
+# Syncthing 충돌 파일
+*.sync-conflict-*
+
+# Playwright
+.playwright-mcp/
+playwright-report/
+test-results/
+e2e/.auth/
+e2e/test-results/
+e2e/playwright-report/
