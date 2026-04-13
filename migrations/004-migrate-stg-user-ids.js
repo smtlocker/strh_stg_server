@@ -217,8 +217,13 @@ async function main() {
       const units = await fetchAllUnitsForSite(env.SG_BASE_URL, env.SG_API_KEY, site.siteId);
       console.log(`  STG 유닛: ${units.length}개`);
 
+      let done = 0;
       for (const unit of units) {
         stats.total++;
+        done++;
+        if (done % 50 === 0 || done === units.length) {
+          console.log(`  진행: ${done}/${units.length} (occupied ${stats.occupied}, mapped ${stats.mapped})`);
+        }
         const unitName = unit.name || unit.id;
 
         // smartcube_id 확인

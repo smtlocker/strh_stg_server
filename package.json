@@ -11,7 +11,8 @@
     "start:prod": "node dist/src/main",
     "test": "jest",
     "lint": "eslint \"{src,apps,libs}/**/*.ts\" --fix",
-    "migrate": "node migrations/migrate-all.js"
+    "migrate": "node migrations/migrate-all.js",
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -25,6 +26,7 @@
     "class-validator": "^0.15.1",
     "mssql": "^12.2.1",
     "nodemailer": "^8.0.5",
+    "pm2": "^6.0.14",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

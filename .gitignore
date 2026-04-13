@@ -28,6 +28,10 @@ npm-debug.log*
 # Portable Node.js
 .node/
 
+# Release build
+release/
+.cache/
+
 # OMC / tooling
 .omc/
 .omx/
