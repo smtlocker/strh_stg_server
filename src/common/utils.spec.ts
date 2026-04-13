@@ -34,6 +34,16 @@ describe('normalizePhone', () => {
   it('하이픈 포함 번호', () => {
     expect(normalizePhone('010-1234-5678')).toBe('01012345678');
   });
+
+  it('+82 뒤에 0이 유지된 케이스 → 0 중복 없이 그대로', () => {
+    expect(normalizePhone('+8201053448110')).toBe('01053448110');
+    expect(normalizePhone('+82 010 5344 8110')).toBe('01053448110');
+  });
+
+  it('국가코드/선행 0 모두 생략된 10자리 한국 모바일', () => {
+    expect(normalizePhone('10 9770 7233')).toBe('01097707233');
+    expect(normalizePhone('1058747791')).toBe('01058747791');
+  });
 });
 
 describe('formatName', () => {

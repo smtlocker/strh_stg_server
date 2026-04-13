@@ -8,14 +8,21 @@ import type {
 /**
  * SG 전화번호 → MSSQL 형식 변환
  * "+82 10 8569 3265" → "01085693265"
- * "+1 555 123 4567" → "15551234567"
+ * "+82010XXXXYYYY"   → "010XXXXYYYY" (국가코드 뒤에 0이 유지된 케이스)
+ * "10 8569 3265"     → "01085693265" (국가코드/선행 0 모두 생략된 한국 모바일)
+ * "+1 555 123 4567"  → "15551234567"
  */
 export function normalizePhone(sgPhone: string): string {
   if (!sgPhone) return '';
   const digits = sgPhone.replace(/\D/g, '');
-  // 한국 번호: 82로 시작하면 0으로 교체
+  // 국가코드 82: 뒤에 0이 이미 있으면 그대로, 없으면 0 추가
   if (digits.startsWith('82')) {
-    return '0' + digits.slice(2);
+    const tail = digits.slice(2);
+    return tail.startsWith('0') ? tail : '0' + tail;
+  }
+  // 선행 0 누락된 한국 모바일 (10X XXXX XXXX 형식, 10자리)
+  if (/^10\d{8}$/.test(digits)) {
+    return '0' + digits;
   }
   return digits;
 }

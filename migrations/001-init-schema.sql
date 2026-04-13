@@ -100,7 +100,7 @@ GO
 
 
 -- ────────────────────────────────────────────────────────────
--- 3. tblPTIUserInfo 컬럼 추가
+-- 3. tblPTIUserInfo 컬럼 + 인덱스 추가
 -- ────────────────────────────────────────────────────────────
 IF NOT EXISTS (
   SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
@@ -111,6 +111,48 @@ BEGIN
   PRINT 'tblPTIUserInfo.StgUserId 추가 완료';
 END
 ELSE PRINT 'tblPTIUserInfo.StgUserId 이미 존재 (스킵)';
+GO
+
+-- tblPTIUserInfo 는 legacy HEAP 테이블로 인덱스가 없어 모든 조회가
+-- full scan 이었다. 아래 인덱스를 통해 webhook/sync/migration 경로에서
+-- (areaCode, showBoxNo) / stgUserId / userPhone 조건 조회를 가속한다.
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE object_id = OBJECT_ID('tblPTIUserInfo') AND name = 'IX_PTI_AreaBox'
+)
+BEGIN
+  CREATE NONCLUSTERED INDEX IX_PTI_AreaBox
+    ON tblPTIUserInfo (AreaCode, showBoxNo)
+    INCLUDE (OfficeCode, StgUserId, UserPhone, UserName, AccessCode, Enable);
+  PRINT 'IX_PTI_AreaBox 생성 완료';
+END
+ELSE PRINT 'IX_PTI_AreaBox 이미 존재 (스킵)';
+GO
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE object_id = OBJECT_ID('tblPTIUserInfo') AND name = 'IX_PTI_StgUserId'
+)
+BEGIN
+  CREATE NONCLUSTERED INDEX IX_PTI_StgUserId
+    ON tblPTIUserInfo (StgUserId)
+    WHERE StgUserId IS NOT NULL;
+  PRINT 'IX_PTI_StgUserId 생성 완료';
+END
+ELSE PRINT 'IX_PTI_StgUserId 이미 존재 (스킵)';
+GO
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE object_id = OBJECT_ID('tblPTIUserInfo') AND name = 'IX_PTI_UserPhone'
+)
+BEGIN
+  CREATE NONCLUSTERED INDEX IX_PTI_UserPhone
+    ON tblPTIUserInfo (UserPhone)
+    WHERE UserPhone IS NOT NULL AND UserPhone <> '';
+  PRINT 'IX_PTI_UserPhone 생성 완료';
+END
+ELSE PRINT 'IX_PTI_UserPhone 이미 존재 (스킵)';
 GO
 
 

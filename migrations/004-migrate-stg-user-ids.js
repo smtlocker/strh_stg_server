@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 /**
- * 003: STG User ID 매핑 스크립트
+ * 004: STG User ID 매핑 스크립트 (rental 기반)
  *
- * STG API에서 사용자 목록을 가져와 phone + name 기준으로
- * tblPTIUserInfo.StgUserId 및 tblBoxMaster.userCode를 업데이트합니다.
+ * STG 사이트별 유닛을 순회하며, occupied 유닛의 rental.ownerId를
+ * tblPTIUserInfo.StgUserId 및 tblBoxMaster.userCode에 세팅합니다.
+ *
+ * rental.ownerId를 source of truth로 사용하므로 006과 동일한 stgUserId가
+ * 세팅됩니다. 이를 통해 006 sync 시 findExistingAccessCode가 기존
+ * AccessCode를 찾아 재사용할 수 있습니다.
  *
  * 사용법:
- *   node migrations/003-migrate-stg-user-ids.js                # dry-run (변경 없이 확인)
- *   DRY_RUN=false node migrations/003-migrate-stg-user-ids.js  # 실제 실행
+ *   node migrations/004-migrate-stg-user-ids.js                # dry-run
+ *   DRY_RUN=false node migrations/004-migrate-stg-user-ids.js  # 실제 실행
  *
  * 환경변수:
  *   DRY_RUN   - true(기본) / false
  *   ENV_PATH  - .env 파일 경로 (기본: sync-server/.env)
- *
- * 프로덕션 실행 시:
- *   ENV_PATH=/path/to/prod.env DRY_RUN=false node migrations/003-migrate-stg-user-ids.js
  */
 
 const path = require('path');
@@ -23,6 +24,7 @@ const https = require('https');
 const http = require('http');
 
 const sql = require('mssql');
+const { SITES } = require('./lib/sites');
 
 // ─── .env 로드 ───────────────────────────────────────────
 
@@ -47,13 +49,17 @@ function loadEnv() {
   return env;
 }
 
-// ─── 유틸리티 (sync-server/src/common/utils.ts 동일 로직) ──
+// ─── 유틸리티 ────────────────────────────────────────────
 
 function normalizePhone(sgPhone) {
   if (!sgPhone) return '';
   const digits = sgPhone.replace(/\D/g, '');
   if (digits.startsWith('82')) {
-    return '0' + digits.slice(2);
+    const tail = digits.slice(2);
+    return tail.startsWith('0') ? tail : '0' + tail;
+  }
+  if (/^10\d{8}$/.test(digits)) {
+    return '0' + digits;
   }
   return digits;
 }
@@ -65,9 +71,19 @@ function formatName(lastName, firstName) {
   return last || first || '';
 }
 
+function parseSmartcubeId(id) {
+  if (!id) return null;
+  const sep = id.lastIndexOf(':');
+  if (sep === -1) return null;
+  const groupCode = id.slice(0, sep);
+  const showBoxNo = parseInt(id.slice(sep + 1), 10);
+  if (!groupCode || isNaN(showBoxNo)) return null;
+  return { groupCode, showBoxNo };
+}
+
 // ─── HTTP 헬퍼 ───────────────────────────────────────────
 
-function httpGet(url, apiKey) {
+function httpGetOnce(url, apiKey) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, {
@@ -76,34 +92,65 @@ function httpGet(url, apiKey) {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch {
-          reject(new Error(`JSON parse error: ${data.slice(0, 200)}`));
+        const status = res.statusCode || 0;
+        if (status >= 200 && status < 300) {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            reject(new Error(`JSON parse error: ${data.slice(0, 200)}`));
+          }
+        } else {
+          const err = new Error(`STG HTTP ${status}: ${data.slice(0, 200)}`);
+          err.status = status;
+          reject(err);
         }
       });
     });
     req.on('error', reject);
+    req.setTimeout(30000, () => req.destroy(new Error('request timeout')));
   });
 }
 
-async function fetchAllStgUsers(baseUrl, apiKey) {
-  // STG API는 skip을 지원하지 않고 limit 최대 1000
-  // limit=1000으로 한 번에 조회 후 ID 기준 중복 제거
-  const url = `${baseUrl}/v1/admin/users?limit=1000&include=customFields`;
-  const data = await httpGet(url, apiKey);
-
-  if (!Array.isArray(data)) {
-    throw new Error('STG 사용자 조회 실패: 응답이 배열이 아님');
+// STG API 재시도 wrapper.
+// 429/5xx/네트워크 에러는 exponential backoff 로 최대 MAX_RETRIES 회 재시도.
+async function httpGet(url, apiKey) {
+  const MAX_RETRIES = 5;
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await httpGetOnce(url, apiKey);
+    } catch (err) {
+      lastErr = err;
+      const msg = err.message || '';
+      const status = err.status || 0;
+      const isRetryable =
+        status === 429 ||
+        (status >= 500 && status < 600) ||
+        /ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up|timeout/i.test(msg);
+      if (!isRetryable || attempt === MAX_RETRIES) throw err;
+      const delay = status === 429 ? 2000 * attempt : 300 * attempt;
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
+  throw lastErr;
+}
 
-  // ID 기준 중복 제거
-  const seen = new Set();
-  return data.filter((u) => {
-    if (seen.has(u.id)) return false;
-    seen.add(u.id);
-    return true;
-  });
+async function fetchAllUnitsForSite(baseUrl, apiKey, siteId) {
+  const LIMIT = 1000;
+  const all = [];
+  let offset = 0;
+  for (;;) {
+    const url = `${baseUrl}/v1/admin/units?siteId=${siteId}&include=customFields&limit=${LIMIT}&offset=${offset}`;
+    const data = await httpGet(url, apiKey);
+    if (!Array.isArray(data)) {
+      throw new Error(`STG 유닛 조회 실패 (siteId=${siteId}): 응답이 배열이 아님`);
+    }
+    if (data.length === 0) break;
+    all.push(...data);
+    if (data.length < LIMIT) break;
+    offset += LIMIT;
+  }
+  return all;
 }
 
 // ─── 메인 ─────────────────────────────────────────────────
@@ -112,8 +159,8 @@ async function main() {
   const DRY_RUN = (process.env.DRY_RUN ?? 'true') !== 'false';
   const env = loadEnv();
 
-  console.log('=== 003: STG User ID 매핑 ===');
-  console.log(`DRY_RUN=${DRY_RUN} (실제 실행: DRY_RUN=false node ${path.relative(process.cwd(), process.argv[1])})`);
+  console.log('=== 004: STG User ID 매핑 (rental 기반) ===');
+  console.log(`DRY_RUN=${DRY_RUN}`);
   console.log('');
 
   // ── 1. MSSQL 연결 ──
@@ -138,138 +185,139 @@ async function main() {
     `);
     if (colCheck.recordset.length === 0) {
       throw new Error(
-        'tblPTIUserInfo.StgUserId 컬럼이 없습니다. 먼저 003-add-stg-user-id-column.sql을 실행하세요.',
+        'tblPTIUserInfo.StgUserId 컬럼이 없습니다. 먼저 001-init-schema.sql을 실행하세요.',
       );
     }
     console.log('✓ tblPTIUserInfo.StgUserId 컬럼 확인됨');
 
-    // ── 3. STG 사용자 전체 조회 ──
-    console.log('STG 사용자 목록 조회 중...');
-    const stgUsers = await fetchAllStgUsers(env.SG_BASE_URL, env.SG_API_KEY);
-    console.log(`STG 사용자 수: ${stgUsers.length}`);
-
-    // ── 4. MSSQL 현재 데이터 조회 ──
-    const ptiResult = await pool.request().query(
-      'SELECT UserPhone, UserName, AreaCode, showBoxNo, StgUserId FROM tblPTIUserInfo',
-    );
-    const ptiRows = ptiResult.recordset;
-    console.log(`tblPTIUserInfo 행 수: ${ptiRows.length}`);
-
-    const boxResult = await pool.request().query(`
-      SELECT areaCode, boxNo, userPhone, userName, userCode
-      FROM tblBoxMaster
-      WHERE userPhone IS NOT NULL AND userPhone != ''
-    `);
-    const boxRows = boxResult.recordset;
-    console.log(`tblBoxMaster (사용자 있는 유닛) 행 수: ${boxRows.length}`);
-    console.log('');
-
-    // ── 5. 매핑 실행 ──
     const stats = {
-      pti: { matched: 0, rows: 0, ambiguous: 0, noPhone: 0, noMatch: 0 },
-      box: { matched: 0, rows: 0, ambiguous: 0, noMatch: 0 },
+      total: 0, occupied: 0, mapped: 0, noSmartcubeId: 0,
+      notOccupied: 0, noOwnerId: 0, userFetchFail: 0,
+      ptiUpdated: 0, boxUpdated: 0,
     };
-    const ambiguousLog = [];
 
-    for (const user of stgUsers) {
-      const phone = normalizePhone(user.phone);
+    // ── 3. user 캐시 (ownerId → { phone, name }) ──
+    const userCache = new Map();
+
+    async function getUser(ownerId) {
+      if (userCache.has(ownerId)) return userCache.get(ownerId);
+      const url = `${env.SG_BASE_URL}/v1/admin/users/${ownerId}`;
+      const user = await httpGet(url, env.SG_API_KEY);
+      const phone = normalizePhone(user.phone || user.mobile || '');
       const name = formatName(user.lastName, user.firstName);
-      const label = `${user.name} (${user.id})`;
+      const info = { phone, name, rawName: user.name || '' };
+      userCache.set(ownerId, info);
+      return info;
+    }
 
-      if (!phone) {
-        stats.pti.noPhone++;
-        console.log(`  [SKIP] ${label}: 전화번호 없음`);
-        continue;
-      }
+    // ── 4. 사이트별 유닛 순회 ──
+    for (const site of SITES) {
+      console.log(`\n=== [${site.name}] officeCode=${site.officeCode} ===`);
 
-      // ── tblPTIUserInfo 매핑 ──
-      const ptiCandidates = ptiRows.filter((r) => r.UserPhone === phone);
+      const units = await fetchAllUnitsForSite(env.SG_BASE_URL, env.SG_API_KEY, site.siteId);
+      console.log(`  STG 유닛: ${units.length}개`);
 
-      if (ptiCandidates.length === 0) {
-        stats.pti.noMatch++;
-      } else {
-        // phone+name 으로 매칭
-        const nameMatches = ptiCandidates.filter((r) => r.UserName === name);
-        const targets = nameMatches.length > 0 ? nameMatches : null;
+      for (const unit of units) {
+        stats.total++;
+        const unitName = unit.name || unit.id;
 
-        if (targets) {
-          if (DRY_RUN) {
-            console.log(`  [PTI] ${label} → phone=${phone}, name="${name}" ✓ (${targets.length}행)`);
-          } else {
-            await pool.request()
-              .input('stgUserId', sql.NVarChar, user.id)
-              .input('userPhone', sql.NVarChar, phone)
-              .input('userName', sql.NVarChar, name)
-              .query(
-                'UPDATE tblPTIUserInfo SET StgUserId = @stgUserId WHERE UserPhone = @userPhone AND UserName = @userName',
-              );
-          }
-          stats.pti.matched++;
-          stats.pti.rows += targets.length;
-        } else {
-          const detail = `phone=${phone}, name="${name}", 후보=${ptiCandidates.map((r) => `"${r.UserName}"`).join(',')}`;
-          console.log(`  [PTI-AMBIGUOUS] ${label} → ${detail}`);
-          ambiguousLog.push({ table: 'PTI', user: label, phone, name, candidates: ptiCandidates.length });
-          stats.pti.ambiguous++;
+        // smartcube_id 확인
+        const smartcubeId = unit.customFields?.smartcube_id;
+        const parsed = parseSmartcubeId(smartcubeId);
+        if (!parsed) {
+          stats.noSmartcubeId++;
+          continue;
         }
-      }
 
-      // ── tblBoxMaster 매핑 ──
-      const boxCandidates = boxRows.filter((r) => r.userPhone === phone);
-
-      if (boxCandidates.length === 0) {
-        stats.box.noMatch++;
-      } else {
-        // phone+name 으로 매칭
-        const nameMatches = boxCandidates.filter((r) => r.userName === name);
-        const targets = nameMatches.length > 0 ? nameMatches : null;
-
-        if (targets) {
-          for (const box of targets) {
-            if (DRY_RUN) {
-              console.log(`  [BOX] ${label} → phone=${phone}, box=${box.areaCode}:${box.boxNo} ✓`);
-            } else {
-              await pool.request()
-                .input('stgUserId', sql.NVarChar, user.id)
-                .input('areaCode', sql.NVarChar, box.areaCode)
-                .input('boxNo', sql.Int, box.boxNo)
-                .query(
-                  'UPDATE tblBoxMaster SET userCode = @stgUserId WHERE areaCode = @areaCode AND boxNo = @boxNo',
-                );
-            }
-          }
-          stats.box.matched++;
-          stats.box.rows += targets.length;
-        } else {
-          const detail = `phone=${phone}, name="${name}", 후보=${boxCandidates.map((r) => `"${r.userName}"`).join(',')}`;
-          console.log(`  [BOX-AMBIGUOUS] ${label} → ${detail}`);
-          ambiguousLog.push({ table: 'BOX', user: label, phone, name, candidates: boxCandidates.length });
-          stats.box.ambiguous++;
+        // occupied + rentalId 확인
+        const stgState = (unit.state || '').toLowerCase();
+        if (stgState !== 'occupied' || !unit.rentalId) {
+          stats.notOccupied++;
+          continue;
         }
+
+        stats.occupied++;
+
+        // rental → ownerId
+        let rental;
+        try {
+          const rentalUrl = `${env.SG_BASE_URL}/v1/admin/unit-rentals/${unit.rentalId}?include=customFields`;
+          rental = await httpGet(rentalUrl, env.SG_API_KEY);
+        } catch (err) {
+          console.log(`  [FAIL:RENTAL] ${unitName}: ${err.message}`);
+          stats.userFetchFail++;
+          continue;
+        }
+
+        const ownerId = rental.ownerId;
+        if (!ownerId) {
+          stats.noOwnerId++;
+          console.log(`  [SKIP:NO_OWNER] ${site.name}|${site.officeCode}|${unitName}|${unit.id}`);
+          continue;
+        }
+
+        // user 정보 조회 (캐시)
+        let userInfo;
+        try {
+          userInfo = getUser(ownerId);
+          if (userInfo instanceof Promise) userInfo = await userInfo;
+        } catch (err) {
+          console.log(`  [FAIL:USER] ${unitName}: ${err.message}`);
+          stats.userFetchFail++;
+          continue;
+        }
+
+        // DB 유닛 매핑
+        const areaPrefix = site.officeCode.replace(/^0/, '');
+        const areaCode = 'strh' + areaPrefix + parsed.groupCode;
+
+        if (DRY_RUN) {
+          console.log(`  [MAP] ${unitName} → ${areaCode}:${parsed.showBoxNo} owner=${ownerId} (${userInfo.rawName})`);
+        } else {
+          // tblPTIUserInfo: (AreaCode, showBoxNo) 기준으로 StgUserId 세팅
+          const ptiResult = await pool.request()
+            .input('stgUserId', sql.NVarChar, ownerId)
+            .input('areaCode', sql.NVarChar, areaCode)
+            .input('showBoxNo', sql.Int, parsed.showBoxNo)
+            .query(
+              `UPDATE tblPTIUserInfo SET StgUserId = @stgUserId, UpdateTime = GETDATE()
+               WHERE AreaCode = @areaCode AND showBoxNo = @showBoxNo
+                 AND (StgUserId IS NULL OR StgUserId = '' OR StgUserId <> @stgUserId)`,
+            );
+          stats.ptiUpdated += ptiResult.rowsAffected[0];
+
+          // tblBoxMaster: (areaCode, showBoxNo) 기준으로 userCode 세팅
+          const boxResult = await pool.request()
+            .input('stgUserId', sql.NVarChar, ownerId)
+            .input('areaCode', sql.NVarChar, areaCode)
+            .input('showBoxNo', sql.Int, parsed.showBoxNo)
+            .query(
+              `UPDATE tblBoxMaster SET userCode = @stgUserId, updateTime = GETDATE()
+               WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
+                 AND (userCode IS NULL OR userCode = '' OR userCode <> @stgUserId)`,
+            );
+          stats.boxUpdated += boxResult.rowsAffected[0];
+        }
+
+        stats.mapped++;
       }
     }
 
-    // ── 6. 결과 리포트 ──
+    // ── 5. 결과 리포트 ──
     console.log('');
     console.log('=========================================');
-    console.log('tblPTIUserInfo:');
-    console.log(`  매칭 성공: ${stats.pti.matched}명 (${stats.pti.rows}행 업데이트)`);
-    console.log(`  매칭 실패 (이름 불일치): ${stats.pti.ambiguous}명`);
-    console.log(`  MSSQL에 없음: ${stats.pti.noMatch}명`);
-    console.log(`  전화번호 없음: ${stats.pti.noPhone}명`);
+    console.log(`총 유닛: ${stats.total}`);
+    console.log(`  occupied: ${stats.occupied}`);
+    console.log(`  매핑 성공: ${stats.mapped}`);
+    console.log(`  not occupied (available/reserved): ${stats.notOccupied}`);
+    console.log(`  smartcube_id 없음: ${stats.noSmartcubeId}`);
+    console.log(`  ownerId 없음: ${stats.noOwnerId}`);
+    console.log(`  조회 실패 (rental/user): ${stats.userFetchFail}`);
     console.log('');
-    console.log('tblBoxMaster:');
-    console.log(`  매칭 성공: ${stats.box.matched}명 (${stats.box.rows}행 업데이트)`);
-    console.log(`  매칭 실패 (이름 불일치): ${stats.box.ambiguous}명`);
-    console.log(`  MSSQL에 없음: ${stats.box.noMatch}명`);
-
-    if (ambiguousLog.length > 0) {
-      console.log('');
-      console.log('--- 수동 확인 필요 (AMBIGUOUS) ---');
-      for (const a of ambiguousLog) {
-        console.log(`  [${a.table}] ${a.user}: phone=${a.phone}, name="${a.name}" (후보 ${a.candidates}건)`);
-      }
-    }
+    console.log(`DB 업데이트:`);
+    console.log(`  tblPTIUserInfo: ${stats.ptiUpdated}행`);
+    console.log(`  tblBoxMaster: ${stats.boxUpdated}행`);
+    console.log(`  user 캐시: ${userCache.size}명 (중복 조회 절감)`);
 
     if (DRY_RUN) {
       console.log('');

@@ -66,6 +66,8 @@ export class ScheduledJobWorkerService {
   // ---------------------------------------------------------------------------
   @Cron(CronExpression.EVERY_MINUTE)
   async tick(): Promise<void> {
+    // 마이그레이션 등 단독 스크립트에서 cron 비활성화
+    if (process.env.DISABLE_SCHEDULER === 'true') return;
     if (this.isRunning) {
       this.logger.warn('[tick] Previous tick still running, skipping');
       return;

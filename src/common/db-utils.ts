@@ -232,6 +232,26 @@ export async function upsertPtiUserForUnit(
   } = params;
   const { officeCode, groupCode } = parseAreaCodeParts(areaCode);
 
+  // 기존 null-StgUserId 고스트 정리:
+  //   같은 유닛에 StgUserId 가 비어 있는 레거시 row 는 마이그레이션 백필 미완성
+  //   상태로 남은 row 다. tblBoxMaster 가 유닛당 현재 점유자 1명만 들고 있는
+  //   모델이므로, 이 유닛을 StgUserId 보유한 사용자로 upsert 하려는 시점엔
+  //   null row 는 전부 stale 하다. UPDATE 전에 삭제해 중복 증식을 막는다.
+  //   multi-tenant 유닛도 004 가 성공한 경우 각자 StgUserId 를 가지므로 영향 없음.
+  if (stgUserId) {
+    const cleanupReq = new sql.Request(transaction);
+    cleanupReq.input('officeCode', sql.NVarChar, officeCode);
+    cleanupReq.input('areaCode', sql.NVarChar, areaCode);
+    cleanupReq.input('showBoxNo', sql.Int, showBoxNo);
+    await cleanupReq.query(`
+      DELETE FROM tblPTIUserInfo
+      WHERE OfficeCode = @officeCode
+        AND AreaCode = @areaCode
+        AND showBoxNo = @showBoxNo
+        AND (StgUserId IS NULL OR StgUserId = '')
+    `);
+  }
+
   const req = new sql.Request(transaction);
   req.input('accessCode', sql.NVarChar, accessCode);
   req.input('officeCode', sql.NVarChar, officeCode);

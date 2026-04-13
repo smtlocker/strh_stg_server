@@ -31,11 +31,7 @@ const DELAY_MS = parseInt(process.env.DELAY_MS ?? '100', 10);
 const SG_BASE = process.env.SG_BASE_URL;
 const SG_KEY = process.env.SG_API_KEY;
 
-const SITES = [
-  { id: '698ed8d861c38505daecc6b4', name: '송파점', officeCode: '001' },
-  { id: '69c217cd53c43d6dfe7266b0', name: '마곡점', officeCode: '002' },
-  { id: '698eda4461c38505daee95eb', name: '선릉점', officeCode: '003' },
-];
+const { SITES } = require('./lib/sites');
 
 const dbConfig = {
   server: process.env.DB_HOST,
@@ -105,7 +101,7 @@ async function main() {
     const siteMap = dbMap[site.officeCode] || {};
 
     // STG 유닛 전체 조회
-    const units = await sgGet(`/v1/admin/units?siteId=${site.id}&limit=1000&include=customFields`);
+    const units = await sgGet(`/v1/admin/units?siteId=${site.siteId}&limit=1000&include=customFields`);
 
     let stats = { total: 0, updated: 0, created: 0, skipped: 0, noMatch: 0, failed: 0 };
 

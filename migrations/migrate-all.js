@@ -6,30 +6,55 @@
  *   node migrations/migrate-all.js
  *
  * 결과물 (logs/ 폴더):
- *   - migrate-YYYYMMDD-HHmmss.log        상세 실행 로그
- *   - migrate-YYYYMMDD-HHmmss-report.md  마이그레이션 보고서
- *   - 004-ambiguous-YYYYMMDD-HHmmss.csv  수동 확인 필요: 사용자 매핑 모호
- *   - 004-name-mismatch-YYYYMMDD-HHmmss.csv  수동 확인 필요: 이름 불일치
- *   - 005-no-access-code-YYYYMMDD-HHmmss.csv  참고: AccessCode 미설정 PTI
+ *   - migrate-YYYYMMDD-HHmmss.log                   상세 실행 로그
+ *   - migrate-YYYYMMDD-HHmmss-report.md             마이그레이션 보고서
+ *   - 004-no-owner-YYYYMMDD-HHmmss.csv              수동 확인: STG rental ownerId 누락
+ *   - 006-no-smartcube-id-YYYYMMDD-HHmmss.csv       수동 확인: smartcube_id 미설정 유닛
+ *   - 006-db-only-occupied-YYYYMMDD-HHmmss.csv      수동 확인: DB에만 점유 기록
+ *   - 006-sync-failed-YYYYMMDD-HHmmss.csv           수동 확인: 동기화 실패 유닛
  */
 
-const { execSync } = require('child_process');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { StringDecoder } = require('string_decoder');
 
 const ROOT = path.join(__dirname, '..');
 const LOGS_DIR = path.join(ROOT, 'logs');
 
-// .env 로드
+// .env 로드 (DB_HOST 등 스텝 실행 전 보고서 작성에 필요)
 const envFile = path.join(ROOT, '.env');
 if (fs.existsSync(envFile)) {
-  fs.readFileSync(envFile, 'utf8').split('\n').forEach(line => {
+  fs.readFileSync(envFile, 'utf8').split('\n').forEach((line) => {
     const m = line.match(/^([^#=]+)=(.*)$/);
     if (m && !process.env[m[1].trim()]) process.env[m[1].trim()] = m[2].trim();
   });
 }
 
 if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
+
+// ── 로그 로테이션 ─────────────────────────────────────────
+// 기본 30일 이상 된 migrate-* / 004-* / 005-* / 006-* 파일 제거.
+// LOG_RETENTION_DAYS 환경변수로 조정 가능 (0 이면 비활성).
+(function rotateLogs() {
+  const retentionDays = parseInt(process.env.LOG_RETENTION_DAYS ?? '30', 10);
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const patterns = [/^migrate-\d{8}-\d{6}(\.log|-report\.md)$/, /^00[456]-.*-\d{8}-\d{6}\.csv$/];
+  let removed = 0;
+  for (const file of fs.readdirSync(LOGS_DIR)) {
+    if (!patterns.some((p) => p.test(file))) continue;
+    const fp = path.join(LOGS_DIR, file);
+    try {
+      const stat = fs.statSync(fp);
+      if (stat.mtimeMs < cutoff) {
+        fs.unlinkSync(fp);
+        removed++;
+      }
+    } catch { /* ignore */ }
+  }
+  if (removed > 0) console.log(`[rotate] removed ${removed} old log/csv files (retention: ${retentionDays}d)`);
+})();
 
 const now = new Date();
 const ts = [
@@ -41,15 +66,140 @@ const ts = [
   String(now.getMinutes()).padStart(2, '0'),
   String(now.getSeconds()).padStart(2, '0'),
 ].join('');
+
 const logFile = path.join(LOGS_DIR, `migrate-${ts}.log`);
 const reportFile = path.join(LOGS_DIR, `migrate-${ts}-report.md`);
 
-const logLines = [];
+// ── CSV 스트리밍 설정 ─────────────────────────────────────
+// 각 CSV 는 라인 단위 streaming write 로 누적. 과거 구현은 전체 로그를
+// 메모리에 담아 두고 post-process 했는데, 긴 로그에서 메모리 낭비 + 006
+// 진행 상황이 실시간 안 보이는 문제가 있어 streaming 으로 변경.
+
+const csvs = {
+  noOwner: {
+    path: path.join(LOGS_DIR, `004-no-owner-${ts}.csv`),
+    header: 'site,officeCode,unitName,unitId\n',
+    // [SKIP:NO_OWNER] site|officeCode|unitName|unitId
+    pattern: /\[SKIP:NO_OWNER\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(\S+)/,
+    format: (m) => `${m[1]},${m[2]},${m[3]},${m[4]}\n`,
+    count: 0,
+  },
+  noSmartId: {
+    path: path.join(LOGS_DIR, `006-no-smartcube-id-${ts}.csv`),
+    header: 'site,unitName,unitId,stgState\n',
+    pattern: /SKIP:NO_SMARTCUBE_ID\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/,
+    format: (m) => `${m[1]},${m[2]},${m[3]},${m[4]}\n`,
+    count: 0,
+  },
+  dbOnly: {
+    path: path.join(LOGS_DIR, `006-db-only-occupied-${ts}.csv`),
+    header: 'site,areaCode,showBoxNo,unitName,stgState,dbUserCode,dbUserName\n',
+    pattern: /SKIP:DB_ONLY_OCCUPIED\]\s+([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|(.+)/,
+    format: (m) => `${m[1]},${m[2]},${m[3]},${m[4]},${m[5]},${m[6]},"${m[7]}"\n`,
+    count: 0,
+  },
+  syncFail: {
+    path: path.join(LOGS_DIR, `006-sync-failed-${ts}.csv`),
+    header: 'site,unitName,smartcubeId,error\n',
+    pattern: /FAIL:SYNC\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/,
+    format: (m) => `${m[1]},${m[2]},${m[3]},"${m[4]}"\n`,
+    count: 0,
+  },
+};
+
+// 로그/CSV writeStream 열기
+const logStream = fs.createWriteStream(logFile, { flags: 'w' });
+const csvStreams = {};
+for (const [key, cfg] of Object.entries(csvs)) {
+  const s = fs.createWriteStream(cfg.path, { flags: 'w' });
+  s.write(cfg.header);
+  csvStreams[key] = s;
+}
+
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
-  fs.appendFileSync(logFile, line + '\n');
-  logLines.push(msg);
+  logStream.write(line + '\n');
+}
+
+// 자식 프로세스 라인을 CSV 패턴에 대조해 누적.
+// 복수 패턴이 매칭될 수 없음 (각 패턴이 상호 배타적인 태그를 포함).
+function extractCsv(line) {
+  for (const [key, cfg] of Object.entries(csvs)) {
+    const m = line.match(cfg.pattern);
+    if (m) {
+      csvStreams[key].write(cfg.format(m));
+      cfg.count++;
+      return;
+    }
+  }
+}
+
+// ── 스텝 실행 (spawn + streaming tee) ──────────────────────
+function runStep(step, idx, total) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    log(`[${idx + 1}/${total}] ${step.name} 실행 중...`);
+
+    const child = spawn(step.cmd, {
+      cwd: ROOT,
+      env: { ...process.env },
+      shell: true,
+    });
+
+    // stdout/stderr 모두 라인 버퍼링 후 tee.
+    // chunk 경계가 라인 중간에 걸리므로 트레일링 부분을 다음 chunk 까지 보관.
+    // UTF-8 멀티바이트 문자가 chunk 경계에서 쪼개지지 않도록 StringDecoder 사용.
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    const stdoutRef = { value: '' };
+    const stderrRef = { value: '' };
+
+    const emitLine = (raw) => {
+      if (raw === '') return;
+      const indented = `  ${raw}`;
+      console.log(indented);
+      logStream.write(indented + '\n');
+      extractCsv(raw);
+    };
+
+    const handleChunk = (chunk, decoder, tailRef) => {
+      const text = decoder.write(chunk);
+      const combined = tailRef.value + text;
+      const parts = combined.split('\n');
+      tailRef.value = parts.pop();
+      for (const raw of parts) emitLine(raw);
+    };
+
+    child.stdout.on('data', (c) => handleChunk(c, stdoutDecoder, stdoutRef));
+    child.stderr.on('data', (c) => handleChunk(c, stderrDecoder, stderrRef));
+
+    child.on('close', (code) => {
+      // decoder 잔여분 flush
+      const stdoutFlush = stdoutDecoder.end();
+      if (stdoutFlush) stdoutRef.value += stdoutFlush;
+      const stderrFlush = stderrDecoder.end();
+      if (stderrFlush) stderrRef.value += stderrFlush;
+
+      // 남은 트레일링 라인 flush
+      if (stdoutRef.value) emitLine(stdoutRef.value);
+      if (stderrRef.value) emitLine(stderrRef.value);
+
+      const durationSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+      if (code === 0) {
+        log(`[${idx + 1}/${total}] ${step.name} — 완료 (${durationSec}s)`);
+        resolve({ ok: true });
+      } else {
+        log(`[${idx + 1}/${total}] ${step.name} — 실패 (exit ${code}, ${durationSec}s)`);
+        resolve({ ok: false, code });
+      }
+    });
+
+    child.on('error', (err) => {
+      log(`[${idx + 1}/${total}] ${step.name} — spawn 에러: ${err.message}`);
+      resolve({ ok: false, code: -1 });
+    });
+  });
 }
 
 const steps = [
@@ -61,116 +211,41 @@ const steps = [
   { name: '006 전체 사이트 동기화', cmd: `DRY_RUN=false node migrations/006-site-sync.js` },
 ];
 
-const stepResults = [];
+(async () => {
+  log(`마이그레이션 시작 (${steps.length}단계)`);
+  log(`로그 파일: ${logFile}`);
+  log('');
 
-log(`마이그레이션 시작 (${steps.length}단계)`);
-log(`로그 파일: ${logFile}`);
-log('');
-
-let failed = false;
-for (let i = 0; i < steps.length; i++) {
-  const step = steps[i];
-  log(`[${i + 1}/${steps.length}] ${step.name} 실행 중...`);
-
-  try {
-    const output = execSync(step.cmd, {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-    const lines = output.trim() ? output.trim().split('\n') : [];
-    lines.forEach((line) => log(`  ${line}`));
-    log(`[${i + 1}/${steps.length}] ${step.name} — 완료`);
+  const stepResults = [];
+  let failed = false;
+  for (let i = 0; i < steps.length; i++) {
+    const r = await runStep(steps[i], i, steps.length);
+    if (r.ok) {
+      stepResults.push({ name: steps[i].name, status: '완료' });
+    } else {
+      stepResults.push({ name: steps[i].name, status: '실패' });
+      failed = true;
+      log('');
+      log('마이그레이션 중단. 이전 단계까지는 적용됨.');
+      break;
+    }
     log('');
-    stepResults.push({ name: step.name, status: '완료', lines });
-  } catch (err) {
-    const stderr = err.stderr?.trim() || err.message;
-    log(`[${i + 1}/${steps.length}] ${step.name} — 실패`);
-    stderr.split('\n').forEach((line) => log(`  ERROR: ${line}`));
-    log('');
-    log('마이그레이션 중단. 이전 단계까지는 적용됨.');
-    stepResults.push({ name: step.name, status: '실패' });
-    failed = true;
-    break;
   }
-}
 
-if (!failed) {
-  log('전체 마이그레이션 완료.');
-}
+  if (!failed) log('전체 마이그레이션 완료.');
 
-// ── CSV 추출 + 보고서 생성 ──
+  // CSV 스트림 닫기 (보고서에서 파일 참조 전에 flush 보장)
+  await Promise.all(
+    Object.values(csvStreams).map((s) => new Promise((r) => s.end(r))),
+  );
 
-const allOutput = logLines.join('\n');
+  // ── 보고서 생성 ────────────────────────────────────────
+  const dbName = process.env.DB_NAME || '(unknown)';
+  const dbHost = process.env.DB_HOST || '(unknown)';
+  const dbPort = process.env.DB_PORT || '1433';
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-// 004 AMBIGUOUS
-const ambiguousLines = allOutput.split('\n').filter(l => l.includes('-AMBIGUOUS]'));
-const ambiguousCsv = path.join(LOGS_DIR, `004-ambiguous-${ts}.csv`);
-fs.writeFileSync(ambiguousCsv, 'type,stg_user_name,stg_user_id,phone,db_name_candidate\n');
-for (const line of ambiguousLines) {
-  const m = line.match(/\[(.*?-AMBIGUOUS)\]\s+(.*?)\s+\(([^)]+)\)\s+→\s+phone=([^,]+),\s+name="([^"]*)",\s+후보="(.*)"/);
-  if (m) fs.appendFileSync(ambiguousCsv, `${m[1]},${m[2]},${m[3]},${m[4]},"${m[6]}"\n`);
-}
-const ambiguousCount = ambiguousLines.length;
-
-// 004 NAME MISMATCH
-const mismatchLines = allOutput.split('\n').filter(l => /\[(PTI|BOX)\]\s/.test(l) && l.includes('후보'));
-const mismatchCsv = path.join(LOGS_DIR, `004-name-mismatch-${ts}.csv`);
-fs.writeFileSync(mismatchCsv, 'type,stg_user_name,stg_user_id,phone,stg_name\n');
-for (const line of mismatchLines) {
-  const m = line.match(/\[(PTI|BOX)\]\s+(.*?)\s+\(([^)]+)\):\s+phone=([^,]+),\s+name="([^"]*)"/);
-  if (m) fs.appendFileSync(mismatchCsv, `${m[1]},${m[2]},${m[3]},${m[4]},"${m[5]}"\n`);
-}
-const mismatchCount = mismatchLines.length;
-
-// 005 NO_ACCESS_CODE
-const noAcLines = allOutput.split('\n').filter(l => l.includes('NO_ACCESS_CODE'));
-const noAcCsv = path.join(LOGS_DIR, `005-no-access-code-${ts}.csv`);
-fs.writeFileSync(noAcCsv, 'office_code,phone,unit_count\n');
-for (const line of noAcLines) {
-  const m = line.match(/NO_ACCESS_CODE\]\s+(\d+)\|(\S+)\s+units=(\d+)/);
-  if (m) fs.appendFileSync(noAcCsv, `${m[1]},${m[2]},${m[3]}\n`);
-}
-const noAcCount = noAcLines.length;
-
-// 006 NO_SMARTCUBE_ID (STG에만 존재, DB 매핑 없음)
-const noIdLines = allOutput.split('\n').filter(l => l.includes('SKIP:NO_SMARTCUBE_ID'));
-const noIdCsv = path.join(LOGS_DIR, `006-no-smartcube-id-${ts}.csv`);
-fs.writeFileSync(noIdCsv, 'site,unitName,unitId,stgState\n');
-for (const line of noIdLines) {
-  const m = line.match(/NO_SMARTCUBE_ID\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/);
-  if (m) fs.appendFileSync(noIdCsv, `${m[1]},${m[2]},${m[3]},${m[4]}\n`);
-}
-const noIdCount = noIdLines.length;
-
-// 006 DB_ONLY_OCCUPIED (STG에 rental 없지만 DB에 입주 데이터)
-const dbOnlyLines = allOutput.split('\n').filter(l => l.includes('SKIP:DB_ONLY_OCCUPIED'));
-const dbOnlyCsv = path.join(LOGS_DIR, `006-db-only-occupied-${ts}.csv`);
-fs.writeFileSync(dbOnlyCsv, 'site,areaCode,showBoxNo,unitName,stgState,dbUserCode,dbUserName\n');
-for (const line of dbOnlyLines) {
-  const m = line.match(/DB_ONLY_OCCUPIED\]\s+([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|(.+)/);
-  if (m) fs.appendFileSync(dbOnlyCsv, `${m[1]},${m[2]},${m[3]},${m[4]},${m[5]},${m[6]},"${m[7]}"\n`);
-}
-const dbOnlyCount = dbOnlyLines.length;
-
-// 006 FAIL:SYNC
-const syncFailLines = allOutput.split('\n').filter(l => l.includes('FAIL:SYNC'));
-const syncFailCsv = path.join(LOGS_DIR, `006-sync-failed-${ts}.csv`);
-fs.writeFileSync(syncFailCsv, 'site,unitName,smartcubeId,error\n');
-for (const line of syncFailLines) {
-  const m = line.match(/FAIL:SYNC\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/);
-  if (m) fs.appendFileSync(syncFailCsv, `${m[1]},${m[2]},${m[3]},"${m[4]}"\n`);
-}
-const syncFailCount = syncFailLines.length;
-
-// ── 보고서 생성 ──
-const dbName = process.env.DB_NAME || '(unknown)';
-const dbHost = process.env.DB_HOST || '(unknown)';
-const dbPort = process.env.DB_PORT || '1433';
-const date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-
-const report = `# 마이그레이션 보고서
+  const report = `# 마이그레이션 보고서
 
 - 실행일: ${date}
 - 대상 DB: \`${dbName}\` (${dbHost}:${dbPort})
@@ -180,41 +255,29 @@ const report = `# 마이그레이션 보고서
 
 | 단계 | 결과 |
 |------|------|
-${stepResults.map(r => `| ${r.name} | ${r.status} |`).join('\n')}
+${stepResults.map((r) => `| ${r.name} | ${r.status} |`).join('\n')}
 
 ## 수동 확인 필요 항목
 
-### 004: 사용자 매핑 모호 (${ambiguousCount}건)
+### 004: rental ownerId 누락 (${csvs.noOwner.count}건)
 
-STG 사용자와 DB의 전화번호가 일치하나 이름이 여러 후보와 매칭됨. 수동으로 올바른 매핑을 확인해야 합니다.
+STG occupied 유닛에 rental.ownerId 가 없어 StgUserId 를 세팅할 수 없음. STG 데이터 이슈로 STG 측 확인 필요.
 
-파일: \`004-ambiguous-${ts}.csv\`
+파일: \`004-no-owner-${ts}.csv\`
 
-### 004: 이름 불일치 (${mismatchCount}건)
+### 006: smartcube_id 미설정 (${csvs.noSmartId.count}건)
 
-STG와 DB 간 이름 표기가 달라 자동 매핑되지 않은 사용자. 수동 확인 후 필요 시 DB 또는 STG에서 이름을 수정해야 합니다.
-
-파일: \`004-name-mismatch-${ts}.csv\`
-
-### 005: AccessCode 미설정 (${noAcCount}건)
-
-PTI에 등록되어 있으나 AccessCode가 없는 사용자. 서버 가동 후 입주 이벤트 발생 시 자동 생성되므로 즉시 조치 불필요. 참고용.
-
-파일: \`005-no-access-code-${ts}.csv\`
-
-### 006: smartcube_id 미설정 (${noIdCount}건)
-
-STG에 유닛이 존재하지만 smartcube_id가 설정되지 않아 DB와 매핑 불가. 003 단계에서 매핑되지 않은 유닛.
+STG 에 유닛이 존재하지만 smartcube_id 가 설정되지 않아 DB 와 매핑 불가. 003 단계에서 매핑되지 않은 유닛.
 
 파일: \`006-no-smartcube-id-${ts}.csv\`
 
-### 006: DB에만 입주 데이터 존재 (${dbOnlyCount}건)
+### 006: DB 에만 입주 데이터 존재 (${csvs.dbOnly.count}건)
 
-STG에는 rental이 없지만 DB에 입주 상태(useState=1)인 유닛. 기존 호호락 데이터일 수 있으므로 동기화에서 제외됨. 수동 확인 필요.
+STG 에는 rental 이 없지만 DB 에 입주 상태(useState=1)인 유닛. 기존 호호락 데이터일 수 있으므로 동기화에서 제외됨. 수동 확인 필요.
 
 파일: \`006-db-only-occupied-${ts}.csv\`
 
-### 006: 동기화 실패 (${syncFailCount}건)
+### 006: 동기화 실패 (${csvs.syncFail.count}건)
 
 사이트 동기화 중 에러가 발생한 유닛. 수동 재동기화 필요.
 
@@ -225,14 +288,17 @@ STG에는 rental이 없지만 DB에 입주 상태(useState=1)인 유닛. 기존 
 \`logs/migrate-${ts}.log\`
 `;
 
-fs.writeFileSync(reportFile, report);
-log('');
-log(`보고서: ${reportFile}`);
-log(`CSV: ${ambiguousCsv} (${ambiguousCount}건)`);
-log(`CSV: ${mismatchCsv} (${mismatchCount}건)`);
-log(`CSV: ${noAcCsv} (${noAcCount}건)`);
-log(`CSV: ${noIdCsv} (${noIdCount}건)`);
-log(`CSV: ${dbOnlyCsv} (${dbOnlyCount}건)`);
-log(`CSV: ${syncFailCsv} (${syncFailCount}건)`);
+  fs.writeFileSync(reportFile, report);
+  log('');
+  log(`보고서: ${reportFile}`);
+  for (const [, cfg] of Object.entries(csvs)) {
+    log(`CSV: ${cfg.path} (${cfg.count}건)`);
+  }
 
-process.exit(failed ? 1 : 0);
+  // 로그 스트림 닫기
+  logStream.end();
+  process.exit(failed ? 1 : 0);
+})().catch((err) => {
+  console.error('FATAL:', err);
+  process.exit(1);
+});

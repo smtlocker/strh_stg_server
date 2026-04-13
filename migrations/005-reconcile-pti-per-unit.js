@@ -104,7 +104,6 @@ async function main() {
     let toInsert = 0;
     let toUpdate = 0;
     let toDelete = 0;
-    let noAccessCode = 0;
 
     const tx = new sql.Transaction(pool);
     if (!DRY_RUN) await tx.begin();
@@ -116,8 +115,10 @@ async function main() {
         const accessCode = existing[0]?.AccessCode ?? null;
 
         if (!accessCode) {
-          console.log(`[SKIP:NO_ACCESS_CODE] ${key} units=${group.units.length}`);
-          noAccessCode += group.units.length;
+          // 005 시점에 AccessCode 가 없는 사용자는 006 에서 findExistingAccessCode
+          // 실패 후 generateUniqueAccessCode 로 새 코드를 발급받거나, STG 에 rental
+          // 이 없는 경우 이후 삭제된다. 005 는 "기존 코드 재사용" 역할이므로 여기서
+          // 할 일이 없어 skip.
           continue;
         }
 
@@ -207,7 +208,7 @@ async function main() {
 
       if (!DRY_RUN) await tx.commit();
       console.log('---');
-      console.log(JSON.stringify({ dryRun: DRY_RUN, toInsert, toUpdate, toDelete, noAccessCode }, null, 2));
+      console.log(JSON.stringify({ dryRun: DRY_RUN, toInsert, toUpdate, toDelete }, null, 2));
     } catch (err) {
       if (!DRY_RUN) await tx.rollback();
       throw err;
