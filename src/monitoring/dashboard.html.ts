@@ -439,7 +439,8 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
         <span class="hdr-section-label">인증</span>
         <div class="hdr-section-body">
           <span class="mgr-id">로그인: ${DASHBOARD_CURRENT_MGR_ID}</span>
-          <form class="logout-form" method="post" action="/monitoring/logout">
+          <a class="filter-btn" href="/api-docs">API 문서 →</a>
+          <form class="logout-form" method="post" action="/logout">
             <button class="filter-btn" type="submit">로그아웃</button>
           </form>
         </div>
@@ -2063,7 +2064,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   function redirectToMonitoringLogin() {
     if (authRedirectInProgress) return;
     authRedirectInProgress = true;
-    window.location.href = '/monitoring/login';
+    window.location.href = '/login';
   }
   function ngrokFetch(url, opts) {
     var o = opts || {};

@@ -1,5 +1,8 @@
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { DatabaseService } from '../database/database.service';
 import { MonitoringAuthService } from './monitoring-auth.service';
 
@@ -96,6 +99,14 @@ describe('MonitoringAuthService', () => {
     ).toBeNull();
   });
 
+  // setSessionCookie / clearSessionCookie 는 메인 Path=/ cookie 외에 과거
+  // Path=/monitoring 으로 발급된 stale cookie 를 명시적으로 무효화하는 헤더를
+  // 함께 발급한다. 테스트는 메인 cookie 만 검증.
+  const mainCookies = (response: Pick<Response, 'append'>): string[] =>
+    ((response.append as jest.Mock).mock.calls as Array<[string, string]>)
+      .map(([, header]) => header)
+      .filter((header) => !header.includes('Path=/monitoring'));
+
   it('sets and clears session cookies with expected flags', () => {
     const service = new MonitoringAuthService(
       createConfig({
@@ -109,10 +120,7 @@ describe('MonitoringAuthService', () => {
     service.setSessionCookie(response as Response, request, 'session-1');
     service.clearSessionCookie(response as Response, request);
 
-    const append = response.append as jest.Mock;
-    const calls = append.mock.calls as Array<[string, string]>;
-    const setCookie = calls[0][1];
-    const clearCookie = calls[1][1];
+    const [setCookie, clearCookie] = mainCookies(response);
 
     expect(setCookie).toContain('smartcube_monitoring_session=session-1');
     expect(setCookie).toContain('HttpOnly');
@@ -134,8 +142,7 @@ describe('MonitoringAuthService', () => {
       { secure: true, headers: {}, socket: { remoteAddress: '127.0.0.1' } } as unknown as Request,
       'secure-session',
     );
-    const secureCalls = (secureResponse.append as jest.Mock).mock.calls as Array<[string, string]>;
-    expect(secureCalls[0][1]).toContain('Secure');
+    expect(mainCookies(secureResponse)[0]).toContain('Secure');
 
     const insecureResponse = createResponse();
     service.setSessionCookie(
@@ -143,8 +150,90 @@ describe('MonitoringAuthService', () => {
       { secure: false, headers: {}, socket: { remoteAddress: '127.0.0.1' } } as unknown as Request,
       'insecure-session',
     );
-    const insecureCalls = (insecureResponse.append as jest.Mock).mock.calls as Array<[string, string]>;
-    expect(insecureCalls[0][1]).not.toContain('Secure');
+    expect(mainCookies(insecureResponse)[0]).not.toContain('Secure');
+  });
+
+  it('persists sessions to disk and rehydrates them on next instance', () => {
+    const storePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'smartcube-sessions-')),
+      'sessions.json',
+    );
+    process.env.MONITORING_SESSION_STORE = storePath;
+
+    try {
+      const first = new MonitoringAuthService(
+        createConfig({
+          'monitoringAuth.sessionStore': storePath,
+        }) as ConfigService,
+        { query: jest.fn() } as unknown as DatabaseService,
+      );
+      const session = first.createSession('admin');
+      first.flushSessionsToDisk();
+
+      expect(fs.existsSync(storePath)).toBe(true);
+      const persisted = JSON.parse(fs.readFileSync(storePath, 'utf8')) as unknown[];
+      expect(persisted).toHaveLength(1);
+
+      const second = new MonitoringAuthService(
+        createConfig({
+          'monitoringAuth.sessionStore': storePath,
+        }) as ConfigService,
+        { query: jest.fn() } as unknown as DatabaseService,
+      );
+      const restored = second.getSessionFromRequest({
+        headers: { cookie: `smartcube_monitoring_session=${session.id}` },
+      } as Request);
+
+      expect(restored).not.toBeNull();
+      expect(restored?.mgrId).toBe('admin');
+    } finally {
+      delete process.env.MONITORING_SESSION_STORE;
+      try {
+        fs.rmSync(path.dirname(storePath), { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failure
+      }
+    }
+  });
+
+  it('drops expired sessions when loading from disk', () => {
+    const storePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'smartcube-sessions-')),
+      'sessions.json',
+    );
+    fs.writeFileSync(
+      storePath,
+      JSON.stringify([
+        { id: 'expired', mgrId: 'admin', expiresAt: Date.now() - 1000 },
+        { id: 'live', mgrId: 'admin', expiresAt: Date.now() + 60_000 },
+      ]),
+    );
+
+    try {
+      const service = new MonitoringAuthService(
+        createConfig({
+          'monitoringAuth.sessionStore': storePath,
+        }) as ConfigService,
+        { query: jest.fn() } as unknown as DatabaseService,
+      );
+
+      expect(
+        service.getSessionFromRequest({
+          headers: { cookie: 'smartcube_monitoring_session=expired' },
+        } as Request),
+      ).toBeNull();
+      expect(
+        service.getSessionFromRequest({
+          headers: { cookie: 'smartcube_monitoring_session=live' },
+        } as Request),
+      ).not.toBeNull();
+    } finally {
+      try {
+        fs.rmSync(path.dirname(storePath), { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failure
+      }
+    }
   });
 
   it('sanitizes next paths to stay within monitoring HTML routes', () => {
@@ -154,16 +243,21 @@ describe('MonitoringAuthService', () => {
     );
 
     expect(service.sanitizeNextPath('/monitoring')).toBe('/monitoring');
-    expect(service.sanitizeNextPath('/monitoring?tab=logs')).toBe(
-      '/monitoring?tab=logs',
-    );
-    expect(service.sanitizeNextPath('/monitoring#feed')).toBe(
-      '/monitoring#feed',
-    );
+    // search/hash 는 폐기 — Location 헤더 fragment 인코딩 미보장 + login HTML reflect 우려
+    expect(service.sanitizeNextPath('/monitoring?tab=logs')).toBe('/monitoring');
+    expect(service.sanitizeNextPath('/monitoring#feed')).toBe('/monitoring');
     expect(service.sanitizeNextPath('/monitoring/api/stats')).toBe(
       '/monitoring',
     );
     expect(service.sanitizeNextPath('/monitoringevil')).toBe('/monitoring');
     expect(service.sanitizeNextPath('https://example.com')).toBe('/monitoring');
+    // Swagger UI HTML 만 화이트리스트 허용
+    expect(service.sanitizeNextPath('/api-docs')).toBe('/api-docs');
+    // /api-docs-json 은 redirect 화이트리스트 제외 (raw JSON 페이지 머무름 회피)
+    expect(service.sanitizeNextPath('/api-docs-json')).toBe('/monitoring');
+    // 화이트리스트에 없는 임의 /api-docs 하위 경로는 거부
+    expect(service.sanitizeNextPath('/api-docs/swagger-ui.css')).toBe(
+      '/monitoring',
+    );
   });
 });

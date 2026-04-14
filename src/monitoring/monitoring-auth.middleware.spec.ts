@@ -61,7 +61,7 @@ describe('MonitoringSessionMiddleware', () => {
     expect(hasSessionCookie).toHaveBeenCalled();
     expect(clearSessionCookie).not.toHaveBeenCalled();
     expect(response.redirect).toHaveBeenCalledWith(
-      '/monitoring/login?next=%2Fmonitoring%3Ftab%3Dlogs',
+      '/login?next=%2Fmonitoring%3Ftab%3Dlogs',
     );
   });
 

@@ -41,6 +41,10 @@ tmp/
 # docs (내부 참조용, git 미추적)
 docs/
 
+# 모니터링 세션 persistence (pm2 restart 후에도 로그인 유지). 환경별 secret.
+.sessions.json
+.sessions.json.tmp
+
 # e2e (Playwright 테스트, 로컬 전용)
 e2e/
 

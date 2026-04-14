@@ -84,9 +84,9 @@ describe('Monitoring auth integration', () => {
       consumer
         .apply(MonitoringSessionMiddleware)
         .exclude(
-          { path: 'monitoring/login', method: RequestMethod.GET },
-          { path: 'monitoring/login', method: RequestMethod.POST },
-          { path: 'monitoring/logout', method: RequestMethod.POST },
+          { path: 'login', method: RequestMethod.GET },
+          { path: 'login', method: RequestMethod.POST },
+          { path: 'logout', method: RequestMethod.POST },
         )
         .forRoutes(MonitoringController);
     }
@@ -116,11 +116,20 @@ describe('Monitoring auth integration', () => {
     reprocess.reprocess.mockResolvedValue({ ok: true });
   });
 
+  // setSessionCookie/clearSessionCookie 는 stale Path=/monitoring cookie 무효화
+  // 헤더를 추가로 발급한다. 테스트는 Path=/ 인 메인 세션 cookie 만 사용한다.
+  const mainCookie = (headers: { 'set-cookie'?: string[] }): string => {
+    const cookies = headers['set-cookie'] ?? [];
+    const main = cookies.find((c) => !c.includes('Path=/monitoring'));
+    if (!main) throw new Error('main session cookie missing in response');
+    return main;
+  };
+
   it('redirects logged-out dashboard requests to login and returns 401 for API', async () => {
     await request(httpServer)
       .get('/monitoring')
       .expect(302)
-      .expect('Location', '/monitoring/login?next=%2Fmonitoring');
+      .expect('Location', '/login?next=%2Fmonitoring');
 
     const apiResponse = await request(httpServer)
       .get('/monitoring/api/stats')
@@ -133,7 +142,7 @@ describe('Monitoring auth integration', () => {
     db.query.mockResolvedValueOnce({ recordset: [{ MgrId: 'admin' }] });
 
     const loginResponse = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://monitoring.test')
       .type('form')
@@ -141,7 +150,7 @@ describe('Monitoring auth integration', () => {
       .expect(303)
       .expect('Location', '/monitoring');
 
-    const cookie = loginResponse.headers['set-cookie'][0];
+    const cookie = mainCookie(loginResponse.headers);
     expect(cookie).toContain('smartcube_monitoring_session=');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Lax');
@@ -168,20 +177,20 @@ describe('Monitoring auth integration', () => {
     expect(reprocess.reprocess).toHaveBeenCalledWith(41);
 
     const logoutResponse = await request(httpServer)
-      .post('/monitoring/logout')
+      .post('/logout')
       .set('Cookie', cookie)
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://monitoring.test')
       .expect(303)
-      .expect('Location', '/monitoring/login');
+      .expect('Location', '/login');
 
-    expect(logoutResponse.headers['set-cookie'][0]).toContain('Max-Age=0');
+    expect(mainCookie(logoutResponse.headers)).toContain('Max-Age=0');
 
     await request(httpServer)
       .get('/monitoring')
       .set('Cookie', cookie)
       .expect(302)
-      .expect('Location', '/monitoring/login?next=%2Fmonitoring');
+      .expect('Location', '/login?next=%2Fmonitoring');
   });
 
   it('replaces the previous session on re-login so the old cookie no longer works', async () => {
@@ -190,23 +199,23 @@ describe('Monitoring auth integration', () => {
       .mockResolvedValueOnce({ recordset: [{ MgrId: 'admin' }] });
 
     const firstLogin = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://monitoring.test')
       .type('form')
       .send({ mgrId: 'admin', mgrPwd: 'test1234!', next: '/monitoring' })
       .expect(303);
-    const firstCookie = firstLogin.headers['set-cookie'][0];
+    const firstCookie = mainCookie(firstLogin.headers);
 
     const secondLogin = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Cookie', firstCookie)
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://monitoring.test')
       .type('form')
       .send({ mgrId: 'admin', mgrPwd: 'test1234!', next: '/monitoring' })
       .expect(303);
-    const secondCookie = secondLogin.headers['set-cookie'][0];
+    const secondCookie = mainCookie(secondLogin.headers);
 
     expect(secondCookie).not.toEqual(firstCookie);
 
@@ -226,7 +235,7 @@ describe('Monitoring auth integration', () => {
     db.query.mockResolvedValueOnce({ recordset: [] });
 
     const response = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://monitoring.test')
       .type('form')
@@ -241,7 +250,7 @@ describe('Monitoring auth integration', () => {
 
   it('rejects cross-site or header-less login attempts with 403 and no auth cookie', async () => {
     const foreignResponse = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://evil.test')
       .type('form')
@@ -252,7 +261,7 @@ describe('Monitoring auth integration', () => {
     expect(foreignResponse.headers['set-cookie']).toBeUndefined();
 
     const headerlessResponse = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Host', 'monitoring.test')
       .type('form')
       .send({ mgrId: 'admin', mgrPwd: 'test1234!' })
@@ -264,16 +273,16 @@ describe('Monitoring auth integration', () => {
   it('rejects cross-site or header-less logout attempts without clearing the session', async () => {
     db.query.mockResolvedValueOnce({ recordset: [{ MgrId: 'admin' }] });
     const loginResponse = await request(httpServer)
-      .post('/monitoring/login')
+      .post('/login')
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://monitoring.test')
       .type('form')
       .send({ mgrId: 'admin', mgrPwd: 'test1234!', next: '/monitoring' })
       .expect(303);
-    const cookie = loginResponse.headers['set-cookie'][0];
+    const cookie = mainCookie(loginResponse.headers);
 
     const foreignLogout = await request(httpServer)
-      .post('/monitoring/logout')
+      .post('/logout')
       .set('Cookie', cookie)
       .set('Host', 'monitoring.test')
       .set('Origin', 'http://evil.test')
@@ -287,7 +296,7 @@ describe('Monitoring auth integration', () => {
       .expect(200);
 
     const headerlessLogout = await request(httpServer)
-      .post('/monitoring/logout')
+      .post('/logout')
       .set('Cookie', cookie)
       .set('Host', 'monitoring.test')
       .expect(403);

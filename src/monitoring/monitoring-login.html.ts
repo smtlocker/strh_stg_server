@@ -19,7 +19,7 @@ export function renderMonitoringLoginHtml(params?: {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SmartCube 모니터 로그인</title>
+<title>SmartCube 로그인</title>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -107,9 +107,9 @@ export function renderMonitoringLoginHtml(params?: {
 </head>
 <body>
   <div class="card">
-    <h1>SmartCube 모니터 로그인</h1>
+    <h1>SmartCube 로그인</h1>
     ${error ? `<div class="error">${error}</div>` : ''}
-    <form method="post" action="/monitoring/login" autocomplete="off">
+    <form method="post" action="/login" autocomplete="off">
       <input type="hidden" name="next" value="${next}">
       <label>
         관리자 ID

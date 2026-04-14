@@ -5,6 +5,12 @@ import {
   Logger,
   HttpCode,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBody,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { UpdateAccessCodeDto } from './dto/update-access-code.dto';
 import { DatabaseService } from '../database/database.service';
 import { StoreganiseApiService } from '../storeganise/storeganise-api.service';
@@ -15,6 +21,7 @@ import {
 } from '../common/db-utils';
 import * as sql from 'mssql';
 
+@ApiTags('access-code')
 @Controller('api')
 export class AccessCodeController {
   private readonly logger = new Logger(AccessCodeController.name);
@@ -24,12 +31,19 @@ export class AccessCodeController {
     private readonly sgApi: StoreganiseApiService,
   ) {}
 
-  /**
-   * PUT /api/access-code
-   * 호호락 통합 매니저 → 특정 사용자의 특정 지점 게이트 PIN 변경
-   */
   @Put('access-code')
   @HttpCode(200)
+  @ApiOperation({
+    summary: '게이트 AccessCode 변경',
+    description:
+      '호호락 통합 매니저가 특정 사용자의 특정 지점 게이트 PIN 을 변경한다. 흐름: ① 지점 내 AccessCode 중복 검사 → ② tblPTIUserInfo UPDATE (StgUserId+OfficeCode 기준) → ③ 해당 사용자의 활성 유닛(useState 1/3) tblBoxHistory 스냅샷 기록 → ④ STG `/v1/admin/unit-rentals` 에 `customFields.gate_code` 푸시. STG 동기화가 실패해도 DB 트랜잭션은 커밋된 상태로 `status: partial` 응답.',
+  })
+  @ApiBody({ type: UpdateAccessCodeDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      '`{ status: "ok" }` 정상 / `{ status: "partial", error }` DB 성공 + STG 실패 / `{ status: "error", message }` 중복 또는 PTI 미발견',
+  })
   async updateAccessCode(@Body() dto: UpdateAccessCodeDto) {
     const { stgUserId, officeCode, accessCode } = dto;
     this.logger.log(

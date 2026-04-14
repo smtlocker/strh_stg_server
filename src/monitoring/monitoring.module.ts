@@ -52,10 +52,12 @@ export class MonitoringModule implements NestModule {
     consumer
       .apply(MonitoringSessionMiddleware)
       .exclude(
-        { path: 'monitoring/login', method: RequestMethod.GET },
-        { path: 'monitoring/login', method: RequestMethod.POST },
-        { path: 'monitoring/logout', method: RequestMethod.POST },
+        { path: 'login', method: RequestMethod.GET },
+        { path: 'login', method: RequestMethod.POST },
+        { path: 'logout', method: RequestMethod.POST },
       )
       .forRoutes(MonitoringController);
+    // /api-docs 경로는 SwaggerModule 이 Express 레벨에서 라우트를 등록하므로
+    // NestJS MiddlewareConsumer 로는 보호 불가능. main.ts 에서 app.use 로 직접 처리.
   }
 }

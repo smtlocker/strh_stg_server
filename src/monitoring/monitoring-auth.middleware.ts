@@ -21,7 +21,7 @@ export class MonitoringSessionMiddleware implements NestMiddleware {
 
     if (this.isHtmlDashboardRequest(req)) {
       const nextPath = encodeURIComponent(req.originalUrl || '/monitoring');
-      res.redirect(`/monitoring/login?next=${nextPath}`);
+      res.redirect(`/login?next=${nextPath}`);
       return;
     }
 
