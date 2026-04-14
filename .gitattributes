@@ -1,0 +1,3 @@
+# Windows 배치 파일은 CRLF 필수 (LF 면 parsing 실패)
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -21,6 +21,7 @@ import { renderDashboardHtml } from './dashboard.html';
 import { StoreganiseApiService } from '../storeganise/storeganise-api.service';
 import { UnitSyncHandler } from '../handlers/unit-sync.handler';
 import { MonitoringAuthService } from './monitoring-auth.service';
+import { FailureAlertService } from './failure-alert.service';
 
 /**
  * DatabaseService의 useUTC:false 설정으로 mssql 드라이버가 이미 KST wall clock을
@@ -51,6 +52,7 @@ export class MonitoringController {
     private readonly userSync: UserSyncService,
     private readonly reprocess: ReprocessService,
     private readonly monitoringAuth: MonitoringAuthService,
+    private readonly failureAlert: FailureAlertService,
   ) {}
 
   @Get()
@@ -143,6 +145,12 @@ export class MonitoringController {
   async getStgUnits(@Query('officeCode') officeCode: string) {
     if (!officeCode) return { groups: [] };
     return this.siteSync.getStgUnits(officeCode);
+  }
+
+  @Get('api/db-units')
+  async getDbUnits(@Query('officeCode') officeCode: string) {
+    if (!officeCode) return { groups: [] };
+    return this.siteSync.getDbUnits(officeCode);
   }
 
   @Post('api/site-sync')
@@ -291,5 +299,21 @@ export class MonitoringController {
     UnitSyncHandler.__debugFailCount = 0;
     SiteSyncService.__debugFailCount = 0;
     return { message: 'DEBUG: 모든 강제 실패 카운터 초기화 완료' };
+  }
+
+  @Get('api/test-email/config')
+  getTestEmailConfig() {
+    return this.failureAlert.getSmtpInfo();
+  }
+
+  @Post('api/test-email')
+  async sendTestEmail(
+    @Body() body: { to?: string; subject?: string; body?: string },
+  ) {
+    return this.failureAlert.sendTestEmail(
+      body?.to ?? '',
+      body?.subject ?? '',
+      body?.body ?? '',
+    );
   }
 }

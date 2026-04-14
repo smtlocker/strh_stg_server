@@ -153,7 +153,6 @@ describe('STG API 3회 재시도 패턴 — 시연', () => {
 
     const config = {
       get: () => ({
-        enabled: true,
         from: 'SmartCube Alerts <noreply@hohorack.kr>',
 
         smtp: { host: 'smtp.test.com', port: 587, secure: false, user: 'u', pass: 'p' },

@@ -4,6 +4,8 @@ export interface SyncMeta {
   userName?: string;
   stgUserId?: string;
   stgUnitId?: string;
+  /** DB 가 sync 로 인해 실제 변경됐는지 여부 (표시용). false = no-op. */
+  changed?: boolean;
   /**
    * handler가 throw 없이 조기 return하지만 운영자 주의가 필요한 케이스에 사용.
    * (예: STG 응답의 필수 필드 누락, smartcube_id 파싱 실패)

@@ -24,7 +24,6 @@ export interface AppConfig {
     cookieSecure: string;
   };
   alerts: {
-    enabled: boolean;
     from: string;
     smtp: {
       host: string;
@@ -67,7 +66,6 @@ const configuration = (): AppConfig => ({
     cookieSecure: process.env.MONITORING_SESSION_COOKIE_SECURE ?? 'auto',
   },
   alerts: {
-    enabled: process.env.FAILURE_ALERT_ENABLED !== 'false',
     from:
       process.env.SMTP_FROM ??
       'SmartCube Alerts <alerts@smartlocker.co.kr>',

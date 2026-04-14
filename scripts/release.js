@@ -165,14 +165,14 @@ async function main() {
   fs.copyFileSync(path.join(ROOT, 'package-lock.json'), path.join(RELEASE, 'package-lock.json'));
   fs.copyFileSync(path.join(ROOT, 'ecosystem.config.js'), path.join(RELEASE, 'ecosystem.config.js'));
 
-  const envPath = path.join(ROOT, '.env');
-  if (fs.existsSync(envPath)) {
-    fs.copyFileSync(envPath, path.join(RELEASE, '.env'));
-  }
+  // .env 는 항상 .env.example 을 복사해 생성. 개발 PC 의 실제 .env (dev DB/STG 값)
+  // 가 배포 PC 로 새어 나가지 않도록 보장. 배포 PC 운영자가 최초 1회 편집.
   const envExPath = path.join(ROOT, '.env.example');
-  if (fs.existsSync(envExPath)) {
-    fs.copyFileSync(envExPath, path.join(RELEASE, '.env.example'));
+  if (!fs.existsSync(envExPath)) {
+    throw new Error('.env.example 파일이 없어 release/.env 를 생성할 수 없습니다');
   }
+  fs.copyFileSync(envExPath, path.join(RELEASE, '.env'));
+  fs.copyFileSync(envExPath, path.join(RELEASE, '.env.example'));
 
   // 4. Production dependencies
   // release 용 package.json 에서 dev 전용 scripts 제거 (lifecycle 충돌 방지)

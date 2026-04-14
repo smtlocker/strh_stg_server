@@ -176,6 +176,7 @@ export class UnitSyncHandler implements WebhookHandler {
     const rentalId = unit.rentalId as string | undefined;
     let userName: string | undefined;
     let stgUserId: string | undefined;
+    let changed = false;
 
     if (rentalId) {
       const rental = await this.sgApi.getUnitRental(rentalId);
@@ -183,8 +184,8 @@ export class UnitSyncHandler implements WebhookHandler {
         this.logger.log(
           `[unitSync] Non-occupied rental state treated as empty — unitId=${unitId} rentalId=${rentalId} rentalState=${rental.state}`,
         );
-        await this.syncEmpty(unitId, areaCode, showBoxNo);
-        return { areaCode, showBoxNo, stgUnitId: unitId };
+        const emptyInfo = await this.syncEmpty(unitId, areaCode, showBoxNo);
+        return { areaCode, showBoxNo, stgUnitId: unitId, changed: emptyInfo.changed };
       }
 
       const info = await this.syncWithRental(
@@ -195,11 +196,13 @@ export class UnitSyncHandler implements WebhookHandler {
       );
       userName = info?.userName;
       stgUserId = info?.stgUserId;
+      changed = info?.changed ?? false;
     } else {
-      await this.syncEmpty(unitId, areaCode, showBoxNo);
+      const emptyInfo = await this.syncEmpty(unitId, areaCode, showBoxNo);
+      changed = emptyInfo.changed;
     }
 
-    return { areaCode, showBoxNo, stgUnitId: unitId, userName, stgUserId };
+    return { areaCode, showBoxNo, stgUnitId: unitId, userName, stgUserId, changed };
   }
 
   /**
@@ -267,11 +270,13 @@ export class UnitSyncHandler implements WebhookHandler {
       unknown
     >;
 
-    // STG 기준 오버락 상태 판단 (rental.overdue + lockStatus 통합)
+    // STG 기준 오버락 상태 판단.
+    // rental.customFields.smartcube_lockStatus === 'overlocked' 만 반영.
+    // rental.overdue(연체)는 운영 서버가 관여하지 않으므로 의도적으로 제외.
     const lockStatus = rentalCustomFields['smartcube_lockStatus'] as
       | string
       | undefined;
-    const isOverlocked = !!rental.overdue || lockStatus === 'overlocked';
+    const isOverlocked = lockStatus === 'overlocked';
 
     // pending moveOut job 확인 — rental.moveOutJobId 가 있으면 fetch 해서
     // data.date 를 읽어온다. 상태가 'ready'/'running' 일 때만 활성으로 취급.
@@ -337,7 +342,7 @@ export class UnitSyncHandler implements WebhookHandler {
     areaCode: string,
     showBoxNo: number,
     officeCode: string,
-  ): Promise<{ userName: string; stgUserId: string }> {
+  ): Promise<{ userName: string; stgUserId: string; changed: boolean }> {
     const plan = await this.planRentalSync(rental);
     const {
       rental: rentalRef,
@@ -358,6 +363,7 @@ export class UnitSyncHandler implements WebhookHandler {
     const moveInJobId = (rentalRef as { moveInJobId?: string }).moveInJobId;
 
     let savedAccessCode: string;
+    let changed = false;
     const transaction = await this.db.beginTransaction();
     try {
       // 기존 AccessCode 조회 또는 신규 생성
@@ -370,6 +376,36 @@ export class UnitSyncHandler implements WebhookHandler {
       const accessCode =
         existingAccessCode ??
         (await generateUniqueAccessCode(transaction, officeCode));
+
+      // sync 전후 비교를 위한 현재 상태 읽기 (changed 산출용)
+      const preResult = await new sql.Request(transaction)
+        .input('areaCode', sql.NVarChar, areaCode)
+        .input('showBoxNo', sql.Int, showBoxNo)
+        .query<{
+          useState: number;
+          userCode: string | null;
+          userName: string | null;
+          userPhone: string | null;
+          isOverlocked: number | null;
+        }>(
+          `SELECT useState, userCode, userName, userPhone, isOverlocked
+           FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`,
+        );
+      const pre = preResult.recordset[0];
+      // 유닛이 없으면 UPDATE 에서 throw 되므로 여기서 먼저 명시적으로 차단해
+      // changed 비교가 유실된 row 대해 의미 없는 값을 내지 않도록 한다.
+      if (!pre) {
+        await safeRollback(transaction);
+        throw new Error(`Unit not found in DB: ${areaCode}:${showBoxNo} — smartcube_id 매핑 오류`);
+      }
+      // 레거시 DB 데이터에 하이픈 포함 전화번호가 있을 수 있으므로 비교 전 동일 규칙으로 정규화.
+      const preUserPhoneNormalized = normalizePhone(pre.userPhone ?? '');
+      changed =
+        (pre.useState ?? 0) !== useState ||
+        (pre.userCode ?? '') !== ownerId ||
+        (pre.userName ?? '') !== userName ||
+        preUserPhoneNormalized !== userPhone ||
+        !!pre.isOverlocked !== isOverlocked;
 
       // tblBoxMaster 전체 업데이트 (isOverlocked, endTime 포함)
       const req = new sql.Request(transaction);
@@ -490,21 +526,31 @@ export class UnitSyncHandler implements WebhookHandler {
 
       if (moveOutDate) {
         const moveOutScheduledAt = `${moveOutDate} 23:59:59`;
-        const blockJobId = await this.scheduledJobRepo.create(transaction, {
-          eventType: ScheduledJobEventType.MoveOutBlock,
-          scheduledAt: new Date(moveOutScheduledAt),
-          areaCode,
-          showBoxNo,
-          userPhone,
-          userCode: ownerId,
-          userName,
-          sourceEventType: 'unit.sync',
-          sourceEventId: moveOutJobId ?? rentalId,
-          correlationKey: `unit-sync:moveOut.block:${rentalId}`,
-        });
-        this.logger.log(
-          `[unitSync] scheduled moveOut.block job #${blockJobId} @ ${moveOutScheduledAt}${isFutureMoveOut ? ' (future)' : ' (today/past — worker will run asap)'}`,
-        );
+        const scheduledAtDate = new Date(moveOutScheduledAt);
+        // 이미 지난 moveOutDate 는 스케줄 생성 안 함 — worker staleness(48h) 에
+        // 걸려 "실패" 로그만 남고 무의미함. STG 에 오래된 ready/running moveOut
+        // job 이 남아 있는 경우를 방어.
+        if (scheduledAtDate.getTime() < Date.now()) {
+          this.logger.log(
+            `[unitSync] Skipping past-dated moveOut.block — moveOutDate=${moveOutDate} (${areaCode}:${showBoxNo})`,
+          );
+        } else {
+          const blockJobId = await this.scheduledJobRepo.create(transaction, {
+            eventType: ScheduledJobEventType.MoveOutBlock,
+            scheduledAt: scheduledAtDate,
+            areaCode,
+            showBoxNo,
+            userPhone,
+            userCode: ownerId,
+            userName,
+            sourceEventType: 'unit.sync',
+            sourceEventId: moveOutJobId ?? rentalId,
+            correlationKey: `unit-sync:moveOut.block:${rentalId}`,
+          });
+          this.logger.log(
+            `[unitSync] scheduled moveOut.block job #${blockJobId} @ ${moveOutScheduledAt}${isFutureMoveOut ? ' (future)' : ' (today — worker will run asap)'}`,
+          );
+        }
       }
 
       await transaction.commit();
@@ -526,7 +572,7 @@ export class UnitSyncHandler implements WebhookHandler {
       customFields: { gate_code: savedAccessCode },
     });
 
-    return { userName, stgUserId: ownerId };
+    return { userName, stgUserId: ownerId, changed };
   }
 
   /**
@@ -536,17 +582,24 @@ export class UnitSyncHandler implements WebhookHandler {
     unitId: string,
     areaCode: string,
     showBoxNo: number,
-  ): Promise<void> {
+  ): Promise<{ changed: boolean }> {
     const transaction = await this.db.beginTransaction();
     try {
       const currentBoxResult = await new sql.Request(transaction)
         .input('areaCode', sql.NVarChar, areaCode)
         .input('showBoxNo', sql.Int, showBoxNo)
         .query<{
+          useState: number;
           userPhone: string;
           userCode: string;
+          userName: string;
+          isOverlocked: number | null;
         }>(
-          `SELECT ISNULL(userPhone, '') AS userPhone, ISNULL(userCode, '') AS userCode
+          `SELECT ISNULL(useState, 0) AS useState,
+                  ISNULL(userPhone, '') AS userPhone,
+                  ISNULL(userCode, '') AS userCode,
+                  ISNULL(userName, '') AS userName,
+                  ISNULL(isOverlocked, 0) AS isOverlocked
            FROM tblBoxMaster
            WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`,
         );
@@ -558,6 +611,12 @@ export class UnitSyncHandler implements WebhookHandler {
       }
       const currentUserPhone = normalizePhone(currentBox?.userPhone ?? '');
       const currentStgUserId = currentBox?.userCode || undefined;
+      const changed =
+        currentBox.useState !== 2 ||
+        currentBox.userCode !== '' ||
+        currentBox.userName !== '' ||
+        currentBox.userPhone !== '' ||
+        !!currentBox.isOverlocked;
 
       // tblBoxMaster 초기화
       await new sql.Request(transaction)
@@ -614,6 +673,7 @@ export class UnitSyncHandler implements WebhookHandler {
       this.logger.log(
         `[unitSync] MSSQL reset to empty — ${areaCode}:${showBoxNo}`,
       );
+      return { changed };
     } catch (err) {
       await safeRollback(transaction);
       this.logger.error(

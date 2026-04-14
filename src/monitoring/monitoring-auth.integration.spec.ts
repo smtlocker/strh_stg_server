@@ -17,6 +17,7 @@ import { MonitoringController } from './monitoring.controller';
 import { MonitoringSessionMiddleware } from './monitoring-auth.middleware';
 import { MonitoringOriginValidatorService } from './monitoring-origin-validator.service';
 import { ReprocessService } from './reprocess.service';
+import { FailureAlertService } from './failure-alert.service';
 import { SiteSyncService } from './site-sync.service';
 import { SyncLogService } from './sync-log.service';
 import { UserSyncService } from './user-sync.service';
@@ -75,6 +76,7 @@ describe('Monitoring auth integration', () => {
       { provide: SiteSyncService, useValue: siteSync },
       { provide: UserSyncService, useValue: userSync },
       { provide: ReprocessService, useValue: reprocess },
+      { provide: FailureAlertService, useValue: { getSmtpInfo: () => ({}), sendTestEmail: async () => ({ ok: false, error: 'test' }) } },
     ],
   })
   class TestMonitoringModule implements NestModule {

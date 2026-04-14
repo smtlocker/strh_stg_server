@@ -12,6 +12,7 @@ describe('SiteSyncService', () => {
     const sgApi = {
       getSiteIdByOfficeCode: jest.fn<Promise<string | null>, [string]>(),
       getUnitsForSite: jest.fn<Promise<SgUnit[]>, [string]>(),
+      getActiveRentals: jest.fn<Promise<Record<string, unknown>[]>, []>().mockResolvedValue([]),
     };
     const unitSyncHandler = {
       syncUnit: jest.fn(),
@@ -42,13 +43,16 @@ describe('SiteSyncService', () => {
   it('groups, sorts, and canonicalizes Storeganise unit states', async () => {
     const { service, sgApi } = createService();
     sgApi.getSiteIdByOfficeCode.mockResolvedValue('site-1');
+    sgApi.getActiveRentals.mockResolvedValue([
+      { id: 'r-a2', siteId: 'site-1', customFields: { smartcube_lockStatus: 'overlocked' } } as Record<string, unknown>,
+    ]);
     sgApi.getUnitsForSite.mockResolvedValue([
       {
         id: 'unit-a2',
         name: 'Unit A2',
         state: 'occupied',
         customFields: { smartcube_id: 'A:2' },
-        overdue: true,
+        rentalId: 'r-a2',
       } as SgUnit,
       {
         id: 'unit-a1',
@@ -97,7 +101,7 @@ describe('SiteSyncService', () => {
               unitId: 'unit-a1',
               name: 'Unit A1',
               state: 'available',
-              overdue: false,
+              overlocked: false,
               ownerName: '',
             },
             {
@@ -105,7 +109,7 @@ describe('SiteSyncService', () => {
               unitId: 'unit-a2',
               name: 'Unit A2',
               state: 'occupied',
-              overdue: true,
+              overlocked: true,
               ownerName: '',
             },
             {
@@ -113,7 +117,7 @@ describe('SiteSyncService', () => {
               unitId: 'unit-a3',
               name: 'Unit A3',
               state: 'available', // reserved → 빈칸
-              overdue: false,
+              overlocked: false,
               ownerName: '',
             },
             {
@@ -121,7 +125,7 @@ describe('SiteSyncService', () => {
               unitId: 'unit-a4',
               name: 'Unit A4',
               state: 'available', // pre_completed → 빈칸
-              overdue: false,
+              overlocked: false,
               ownerName: '',
             },
           ],
@@ -133,8 +137,9 @@ describe('SiteSyncService', () => {
               showBoxNo: 1,
               unitId: 'unit-b1',
               name: 'Unit B1',
-              state: 'blocked',
-              overdue: false,
+              // unit.state='blocked' + rental 없음 → DB 모델 기준 'available'로 노멀라이즈
+              state: 'available',
+              overlocked: false,
               ownerName: '',
             },
             {
@@ -142,7 +147,7 @@ describe('SiteSyncService', () => {
               unitId: 'unit-b2',
               name: 'Unit B2',
               state: 'available', // missing state → 빈칸
-              overdue: false,
+              overlocked: false,
               ownerName: '',
             },
           ],

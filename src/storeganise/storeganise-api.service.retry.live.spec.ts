@@ -155,7 +155,6 @@ describeLive('STG API 3회 재시도 + 실제 이메일 발송 (LIVE)', () => {
 
     const config = {
       get: () => ({
-        enabled: true,
         from: SENDER,
         smtp: { host: '', port: 587, secure: false, user: '', pass: '' },
       }),

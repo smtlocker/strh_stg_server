@@ -403,6 +403,43 @@ export class SyncLogService {
     return result.recordset;
   }
 
+  /**
+   * 그리드 (지점 단위) 렌더링용 일괄 조회 — areaCode prefix 로 매칭.
+   * site-sync.service.getDbUnits 전용.
+   */
+  async queryBoxMasterForGrid(
+    areaCodePrefix: string,
+  ): Promise<
+    {
+      areaCode: string;
+      showBoxNo: number;
+      useState: number;
+      isOverlocked: number;
+      userName: string;
+      userPhone: string;
+    }[]
+  > {
+    const result = await this.db.query<{
+      areaCode: string;
+      showBoxNo: number;
+      useState: number;
+      isOverlocked: number;
+      userName: string;
+      userPhone: string;
+    }>(
+      `SELECT areaCode, showBoxNo,
+              ISNULL(useState, 0) AS useState,
+              ISNULL(isOverlocked, 0) AS isOverlocked,
+              ISNULL(userName, '') AS userName,
+              ISNULL(userPhone, '') AS userPhone
+       FROM tblBoxMaster
+       WHERE areaCode LIKE @prefix + '%' AND showBoxNo IS NOT NULL
+       ORDER BY areaCode, showBoxNo`,
+      { prefix: areaCodePrefix },
+    );
+    return result.recordset;
+  }
+
   /** 특정 지점+그룹의 유닛 목록 조회 */
   async getUnitsByGroup(
     officeCode: string,

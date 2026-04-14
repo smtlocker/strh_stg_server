@@ -246,6 +246,37 @@ export class StoreganiseApiService {
     );
   }
 
+  /**
+   * STG 전체 active(occupied/reserved) rental 을 페이지네이션으로 일괄 조회.
+   * 호출측에서 siteId 로 필터링해 사용한다. 그리드 렌더링 시 유닛별 rental
+   * 개별 조회(수백 건) 대신 2~3 회 호출로 대체하는 용도.
+   *
+   * 안전장치: STG 가 limit 을 무시하거나 cursor 오동작 시 무한 루프 방지 위해
+   *   (a) 빈 페이지 감지 시 즉시 중단
+   *   (b) offset 절대 상한 (MAX_PAGES × limit)
+   */
+  async getActiveRentals(): Promise<SgUnitRental[]> {
+    const LIMIT = 1000;
+    const MAX_PAGES = 100; // 10만 rental 초과 시 이상 — STG 규모상 비현실적
+    const all: SgUnitRental[] = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const offset = page * LIMIT;
+      const data = await this.request<SgUnitRental[]>(
+        'GET',
+        `/v1/admin/unit-rentals?state=active&limit=${LIMIT}&offset=${offset}&include=customFields`,
+      );
+      if (!Array.isArray(data) || data.length === 0) break;
+      all.push(...data);
+      if (data.length < LIMIT) break;
+    }
+    if (all.length >= MAX_PAGES * LIMIT) {
+      throw new Error(
+        `getActiveRentals: exceeded MAX_PAGES=${MAX_PAGES} (STG pagination anomaly suspected)`,
+      );
+    }
+    return all;
+  }
+
   async getUser(userId: string): Promise<SgUser> {
     return this.request<SgUser>(
       'GET',

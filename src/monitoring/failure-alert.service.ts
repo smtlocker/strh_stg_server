@@ -14,7 +14,6 @@ interface SmtpConfig {
 }
 
 interface FailureAlertConfig {
-  enabled: boolean;
   from: string;
   smtp: SmtpConfig;
 }
@@ -62,7 +61,7 @@ export class FailureAlertService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     const alerts = this.getAlertConfig();
-    if (alerts.enabled && alerts.smtp.host) {
+    if (alerts.smtp.host && alerts.smtp.user && alerts.smtp.pass) {
       this.transporter = nodemailer.createTransport({
         host: alerts.smtp.host,
         port: alerts.smtp.port,
@@ -175,10 +174,6 @@ export class FailureAlertService implements OnModuleInit {
     }
 
     const alerts = this.getAlertConfig();
-    if (!alerts.enabled) {
-      await this.markAlert(entry.id, 'disabled');
-      return;
-    }
     if (!this.transporter) {
       await this.markAlert(entry.id, 'missing-smtp-config');
       return;
@@ -208,10 +203,54 @@ export class FailureAlertService implements OnModuleInit {
     }
   }
 
+  /**
+   * 대시보드 표시용 SMTP 설정 조회 (비밀번호 제외).
+   */
+  getSmtpInfo(): { host: string; port: number; from: string; transporterReady: boolean } {
+    const cfg = this.getAlertConfig();
+    return {
+      host: cfg.smtp.host,
+      port: cfg.smtp.port,
+      from: cfg.from,
+      transporterReady: this.transporter !== null,
+    };
+  }
+
+  /**
+   * 대시보드 테스트 메일 발송. 기존 transporter 인스턴스를 재사용하므로
+   * 실제 알람 메일과 동일한 경로로 검증된다.
+   */
+  async sendTestEmail(
+    to: string,
+    subject: string,
+    body: string,
+  ): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+    const cfg = this.getAlertConfig();
+    if (!this.transporter) {
+      return { ok: false, error: 'SMTP transporter 미초기화 — SMTP_HOST/USER/PASS 설정 후 서버 재시작' };
+    }
+    const recipient = to.trim();
+    if (!recipient) return { ok: false, error: '수신자 이메일을 입력하세요' };
+
+    try {
+      const info = await this.transporter.sendMail({
+        from: cfg.from,
+        to: recipient,
+        subject: subject || '[SmartCube] 메일 전송 테스트',
+        text: body,
+      });
+      this.logger.log(`Test email sent to ${recipient} (messageId=${info.messageId})`);
+      return { ok: true, messageId: info.messageId };
+    } catch (err) {
+      const msg = (err as Error).message || String(err);
+      this.logger.warn(`Test email failed to ${recipient}: ${msg}`);
+      return { ok: false, error: msg };
+    }
+  }
+
   private getAlertConfig(): FailureAlertConfig {
     return (
       this.configService.get<FailureAlertConfig>('alerts') ?? {
-        enabled: true,
         from: 'SmartCube Alerts <alerts@smartlocker.co.kr>',
         smtp: { host: '', port: 587, secure: false, user: '', pass: '' },
       }

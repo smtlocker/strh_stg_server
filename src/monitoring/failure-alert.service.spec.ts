@@ -14,7 +14,6 @@ const mockSendMail = jest.fn().mockResolvedValue({ messageId: 'test-id' });
 
 describe('FailureAlertService', () => {
   const getConfig = jest.fn(() => ({
-    enabled: true,
     from: 'SmartCube Alerts <alerts@smartlocker.co.kr>',
 
     smtp: { host: 'smtp.test.com', port: 587, secure: false, user: 'u', pass: 'p' },
@@ -251,9 +250,8 @@ describe('FailureAlertService', () => {
 
   it('marks missing-smtp-config when SMTP is not configured', async () => {
     getConfig.mockReturnValueOnce({
-      enabled: true,
       from: 'SmartCube Alerts <alerts@smartlocker.co.kr>',
-  
+
       smtp: { host: '', port: 587, secure: false, user: '', pass: '' },
     });
     const row: RowState = {

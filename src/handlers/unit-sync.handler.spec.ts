@@ -11,6 +11,7 @@ jest.mock('../common/db-utils', () => ({
   upsertPtiUserForUnit: jest.fn(),
   deletePtiUserForUnit: jest.fn().mockResolvedValue(undefined),
   setPtiUserEnableAllForGroup: jest.fn(),
+  safeRollback: jest.fn().mockImplementation((tx) => tx.rollback()),
 }));
 
 jest.mock('../common/utils', () => ({
@@ -27,7 +28,7 @@ import {
   deletePtiUserForUnit,
   setPtiUserEnableAllForGroup,
 } from '../common/db-utils';
-import { resolveUnitMapping, extractUserInfo } from '../common/utils';
+import { resolveUnitMapping, extractUserInfo, normalizePhone } from '../common/utils';
 
 const mockQuery = jest.fn();
 const mockInput = jest.fn().mockReturnThis();
@@ -187,7 +188,11 @@ describe('UnitSyncHandler', () => {
     (generateUniqueAccessCode as jest.Mock).mockResolvedValue('123456');
 
     mockQuery
+      // pre-read (changed 산출용)
+      .mockResolvedValueOnce({ recordset: [{ useState: 1, userCode: 'owner1', userName: 'Kim, Jay', userPhone: '01012345678', isOverlocked: 0 }], rowsAffected: [1] })
+      // tblBoxMaster UPDATE
       .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] })
+      // blocker check
       .mockResolvedValueOnce({ recordset: [{ cnt: 0 }], rowsAffected: [1] });
 
     await handler.syncUnit({
@@ -265,5 +270,119 @@ describe('UnitSyncHandler', () => {
     ).rejects.toThrow(/has no ownerId/);
 
     expect(mockSgApi.getUser).not.toHaveBeenCalled();
+  });
+
+  it('changed=false 반환: DB 현재 상태가 sync 결과와 완전 동일하면 no-op', async () => {
+    (resolveUnitMapping as jest.Mock).mockResolvedValue({
+      areaCode: 'strh00010001',
+      showBoxNo: 1,
+      officeCode: '0001',
+    });
+    mockSgApi.getUnitRental.mockResolvedValue({
+      id: 'rental1',
+      ownerId: 'owner1',
+      state: 'occupied',
+      startDate: '2026-04-07',
+      customFields: {},
+    });
+    mockSgApi.getUser.mockResolvedValue({ id: 'owner1' });
+    (findExistingAccessCode as jest.Mock).mockResolvedValue('654321');
+    (generateUniqueAccessCode as jest.Mock).mockResolvedValue('123456');
+
+    mockQuery
+      // pre-read: DB 가 sync 결과(useState=1, userCode=owner1, name=Kim,Jay, phone=01012345678, isOverlocked=0)와 동일
+      .mockResolvedValueOnce({
+        recordset: [
+          { useState: 1, userCode: 'owner1', userName: 'Kim, Jay', userPhone: '01012345678', isOverlocked: 0 },
+        ],
+        rowsAffected: [1],
+      })
+      .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] })
+      .mockResolvedValueOnce({ recordset: [{ cnt: 0 }], rowsAffected: [1] });
+
+    const result = await handler.syncUnit({
+      id: 'unit1',
+      rentalId: 'rental1',
+      state: 'occupied',
+      customFields: { smartcube_id: '0001:1' },
+    });
+    expect(result?.changed).toBe(false);
+  });
+
+  it('changed=true 반환: DB userCode 가 sync 결과와 다르면 변경 감지', async () => {
+    (resolveUnitMapping as jest.Mock).mockResolvedValue({
+      areaCode: 'strh00010001',
+      showBoxNo: 1,
+      officeCode: '0001',
+    });
+    mockSgApi.getUnitRental.mockResolvedValue({
+      id: 'rental1',
+      ownerId: 'owner1',
+      state: 'occupied',
+      startDate: '2026-04-07',
+      customFields: {},
+    });
+    mockSgApi.getUser.mockResolvedValue({ id: 'owner1' });
+    (findExistingAccessCode as jest.Mock).mockResolvedValue('654321');
+    (generateUniqueAccessCode as jest.Mock).mockResolvedValue('123456');
+
+    mockQuery
+      // pre-read: DB 에 다른 userCode 가 박혀 있음
+      .mockResolvedValueOnce({
+        recordset: [
+          { useState: 1, userCode: 'owner-legacy', userName: 'Kim, Jay', userPhone: '01012345678', isOverlocked: 0 },
+        ],
+        rowsAffected: [1],
+      })
+      .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] })
+      .mockResolvedValueOnce({ recordset: [{ cnt: 0 }], rowsAffected: [1] });
+
+    const result = await handler.syncUnit({
+      id: 'unit1',
+      rentalId: 'rental1',
+      state: 'occupied',
+      customFields: { smartcube_id: '0001:1' },
+    });
+    expect(result?.changed).toBe(true);
+  });
+
+  it('changed=false: DB 에 하이픈 포함 전화번호가 있어도 normalize 하여 동일로 판정', async () => {
+    (resolveUnitMapping as jest.Mock).mockResolvedValue({
+      areaCode: 'strh00010001',
+      showBoxNo: 1,
+      officeCode: '0001',
+    });
+    mockSgApi.getUnitRental.mockResolvedValue({
+      id: 'rental1',
+      ownerId: 'owner1',
+      state: 'occupied',
+      startDate: '2026-04-07',
+      customFields: {},
+    });
+    mockSgApi.getUser.mockResolvedValue({ id: 'owner1' });
+    (findExistingAccessCode as jest.Mock).mockResolvedValue('654321');
+    (generateUniqueAccessCode as jest.Mock).mockResolvedValue('123456');
+    (normalizePhone as jest.Mock).mockImplementation((p: string) =>
+      (p ?? '').replace(/\D/g, ''),
+    );
+
+    mockQuery
+      // pre-read: DB 전화번호는 하이픈 포함 레거시 포맷
+      .mockResolvedValueOnce({
+        recordset: [
+          { useState: 1, userCode: 'owner1', userName: 'Kim, Jay', userPhone: '010-1234-5678', isOverlocked: 0 },
+        ],
+        rowsAffected: [1],
+      })
+      .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] })
+      .mockResolvedValueOnce({ recordset: [{ cnt: 0 }], rowsAffected: [1] });
+
+    const result = await handler.syncUnit({
+      id: 'unit1',
+      rentalId: 'rental1',
+      state: 'occupied',
+      customFields: { smartcube_id: '0001:1' },
+    });
+    expect(result?.changed).toBe(false);
   });
 });

@@ -592,12 +592,18 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           </div>
           <div id="groupTabs" style="display:flex;align-items:center;overflow-x:auto;padding:8px 16px;gap:4px;flex:1;min-height:48px"></div>
         </div>
-        <div style="padding:10px 16px 6px;display:flex;gap:16px;font-size:13px;font-weight:600;color:var(--text2)">
+        <div style="padding:10px 16px 6px;display:flex;gap:16px;font-size:13px;font-weight:600;color:var(--text2);align-items:center">
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#5ba8c8;vertical-align:middle"></span> 사용중</span>
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#a0a0a0;vertical-align:middle"></span> 빈칸</span>
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#e8a040;vertical-align:middle"></span> 차단</span>
-          <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:2px solid var(--red);vertical-align:middle"></span> 연체</span>
-          <span style="margin-left:auto;font-size:11px;color:var(--text3);font-weight:500">상태 기준: STG</span>
+          <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#d34a4a;vertical-align:middle"></span> 오버락</span>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);font-weight:500">
+            상태 기준:
+            <div style="display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden">
+              <button id="unitViewModeDb" type="button" onclick="setUnitViewMode('db')" style="padding:3px 10px;border:0;background:var(--blue);color:#fff;cursor:pointer;font-size:11px">호호락</button>
+              <button id="unitViewModeStg" type="button" onclick="setUnitViewMode('stg')" style="padding:3px 10px;border:0;background:var(--surface3);color:var(--text3);cursor:pointer;font-size:11px">STG</button>
+            </div>
+          </span>
           <label class="check-inline" style="align-self:flex-start;min-height:14px">
             <input type="checkbox" id="unitSelectAll" onchange="toggleAllUnits(this.checked)">
             전체 선택
@@ -636,6 +642,53 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
         </label>
       </div>
       <div id="userSyncLog" style="margin-top:6px;max-height:200px;overflow:auto;font-size:11px;font-family:monospace;color:var(--text3)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-hd">
+      <div style="font-size:12px;font-weight:600;color:var(--text1)">이메일 전송 테스트</div>
+    </div>
+    <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">SMTP 설정 (.env)</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+            SMTP 주소
+            <input id="testEmailHost" type="text" disabled style="padding:6px 8px;background:var(--surface3);color:var(--text2);border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+            포트
+            <input id="testEmailPort" type="text" disabled style="padding:6px 8px;background:var(--surface3);color:var(--text2);border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+            발신자
+            <input id="testEmailFrom" type="text" disabled style="padding:6px 8px;background:var(--surface3);color:var(--text2);border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </label>
+          <div id="testEmailConfigNote" style="font-size:11px;color:var(--text3)"></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:8px">테스트 내용</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+            수신자
+            <input id="testEmailTo" type="email" placeholder="test@example.com" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+            제목
+            <input id="testEmailSubject" type="text" value="[SmartCube] 메일 전송 테스트" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+            본문
+            <textarea id="testEmailBody" rows="4" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;resize:vertical;font-family:inherit">SmartCube 알림 메일 전송이 정상 동작하는지 확인하는 테스트 메일입니다.</textarea>
+          </label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="testEmailBtn" class="control-btn" onclick="sendTestEmail()" style="background:var(--blue)">전송</button>
+            <span id="testEmailResult" style="font-size:11px"></span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1468,6 +1521,13 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       selectedBg: '#c88a30',
       selectedColor: '#fff'
     },
+    overlocked: {
+      bg: 'rgba(211,74,74,0.28)',
+      color: '#ffd7d7',
+      border: 'rgba(211,74,74,0.42)',
+      selectedBg: '#d34a4a',
+      selectedColor: '#fff'
+    },
     unknown: {
       bg: 'var(--surface2)',
       color: 'var(--text3)',
@@ -1478,6 +1538,32 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   };
 
   var _selectedUnits = {}; // { 'groupCode:showBoxNo': true }
+  var _unitViewMode = 'db'; // 'stg' | 'db'
+
+  function updateUnitViewModeButtons() {
+    var btnStg = document.getElementById('unitViewModeStg');
+    var btnDb = document.getElementById('unitViewModeDb');
+    if (!btnStg || !btnDb) return;
+    if (_unitViewMode === 'stg') {
+      btnStg.style.background = 'var(--blue)';
+      btnStg.style.color = '#fff';
+      btnDb.style.background = 'var(--surface3)';
+      btnDb.style.color = 'var(--text3)';
+    } else {
+      btnDb.style.background = 'var(--blue)';
+      btnDb.style.color = '#fff';
+      btnStg.style.background = 'var(--surface3)';
+      btnStg.style.color = 'var(--text3)';
+    }
+  }
+
+  window.setUnitViewMode = function(mode) {
+    if (mode !== 'stg' && mode !== 'db') return;
+    if (_unitViewMode === mode) return;
+    _unitViewMode = mode;
+    updateUnitViewModeButtons();
+    loadGroups();
+  };
 
   window.loadGroups = function() {
     var officeCode = getCurrentSiteSyncOffice();
@@ -1485,7 +1571,8 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     var browser = document.getElementById('siteSyncBrowser');
     var tabs = document.getElementById('groupTabs');
     var grid = document.getElementById('unitGrid');
-    tabs.innerHTML = '<span style="display:flex;align-items:center;min-height:32px;font-size:11px;color:var(--text3)">STG 유닛 로딩중...</span>';
+    var sourceLabel = _unitViewMode === 'db' ? '호호락 DB' : 'STG';
+    tabs.innerHTML = '<span style="display:flex;align-items:center;min-height:32px;font-size:11px;color:var(--text3)">' + sourceLabel + ' 유닛 로딩중...</span>';
     grid.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:338px;text-align:center;color:var(--text3);font-size:11px">로딩중...</div>';
     browser.style.display = 'block';
     if (mirror) mirror.value = officeCode;
@@ -1493,8 +1580,10 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     _stgData = null;
     _activeGroupCode = null;
     _selectedUnits = {};
+    updateUnitViewModeButtons();
 
-    ngrokFetch('/monitoring/api/stg-units?officeCode=' + officeCode)
+    var endpoint = _unitViewMode === 'db' ? '/monitoring/api/db-units' : '/monitoring/api/stg-units';
+    ngrokFetch(endpoint + '?officeCode=' + officeCode)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         _stgData = data;
@@ -1570,18 +1659,27 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     group.units.forEach(function(u) {
       var key = groupCode + ':' + u.showBoxNo;
       var selected = !!_selectedUnits[key];
-      var tile = UNIT_TILE_STYLES[u.state] || UNIT_TILE_STYLES.unknown;
+      var effectiveState = u.overlocked ? 'overlocked' : u.state;
+      var tile = UNIT_TILE_STYLES[effectiveState] || UNIT_TILE_STYLES.unknown;
       var bg = selected ? tile.selectedBg : tile.bg;
       var color = selected ? tile.selectedColor : tile.color;
       var baseBorder = selected ? 'rgba(255,255,255,0.2)' : tile.border;
-      var border = u.overdue ? '2px solid var(--red)' : '1px solid ' + baseBorder;
+      var border = '1px solid ' + baseBorder;
+
+      var titleParts = [esc(u.name)];
+      if (u.overlocked) titleParts.push('오버락');
+      else if (u.state) titleParts.push(esc(u.state));
+      if (u.userName || u.userPhone) {
+        var who = [u.userName, u.userPhone].filter(Boolean).join(' · ');
+        if (who) titleParts.push(esc(who));
+      }
 
       h += '<div onclick="toggleUnit(&#39;' + esc(key) + '&#39;)" style="'
         + 'display:flex;align-items:center;justify-content:center;'
         + 'padding:6px 2px;border-radius:4px;cursor:pointer;user-select:none;'
         + 'background:' + bg + ';border:' + border + ';color:' + color + ';'
         + 'font-size:11px;font-weight:600;min-height:32px;'
-        + '" title="' + esc(u.name) + (u.overdue ? ' (연체)' : '') + ' - ' + (u.state || '') + '">'
+        + '" title="' + titleParts.join(' — ') + '">'
         + u.name
         + '</div>';
     });
@@ -1749,7 +1847,11 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
                     log.innerHTML += '<div style="color:var(--amber)">[' + ev.attempt + '/' + ev.maxAttempts + '] ' + esc(ev.unitName) + ' 재시도 — ' + esc(ev.error) + '</div>';
                   } else if (ev.type === 'unit-success') {
                     var retryTag = ev.attempt > 1 ? ' <span style="color:var(--amber)">[' + ev.attempt + '/' + ev.maxAttempts + ']</span>' : '';
-                    log.innerHTML += '<div style="color:var(--green)">[OK] ' + esc(ev.unitName) + retryTag + '</div>';
+                    var statusTag;
+                    if (ev.skipped) statusTag = ' <span style="color:var(--text3)">· 건너뜀</span>';
+                    else if (ev.changed) statusTag = ' <span style="color:var(--amber)">· 변경됨</span>';
+                    else statusTag = ' <span style="color:var(--text3)">· 변경 없음</span>';
+                    log.innerHTML += '<div style="color:var(--green)">[OK] ' + esc(ev.unitName) + retryTag + statusTag + '</div>';
                   } else if (ev.type === 'unit-error') {
                     var retryTag2 = ev.attempt > 1 ? ' [' + ev.attempt + '/' + ev.maxAttempts + ']' : '';
                     log.innerHTML += '<div style="color:var(--red)">[FAIL] ' + esc(ev.unitName) + retryTag2 + ': ' + esc(ev.error) + '</div>';
@@ -2083,6 +2185,78 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       renderPending();
     } catch(e) {}
   }, 60000);
+
+  // ── Test Email ──
+  async function loadTestEmailConfig() {
+    try {
+      var res = await ngrokFetch('/monitoring/api/test-email/config');
+      var cfg = await res.json();
+      var host = document.getElementById('testEmailHost');
+      var port = document.getElementById('testEmailPort');
+      var from = document.getElementById('testEmailFrom');
+      var note = document.getElementById('testEmailConfigNote');
+      if (host) host.value = cfg.host || '(미설정)';
+      if (port) port.value = cfg.port != null ? String(cfg.port) : '';
+      if (from) from.value = cfg.from || '';
+      if (note) {
+        if (!cfg.transporterReady) {
+          note.textContent = 'SMTP 설정 없음 (HOST/USER/PASS 입력 후 서버 재시작)';
+          note.style.color = 'var(--red)';
+        } else {
+          note.textContent = '전송 준비 완료';
+          note.style.color = 'var(--green)';
+        }
+      }
+    } catch (e) {
+      var note = document.getElementById('testEmailConfigNote');
+      if (note) {
+        note.textContent = '설정 조회 실패: ' + (e.message || e);
+        note.style.color = 'var(--red)';
+      }
+    }
+  }
+
+  window.sendTestEmail = async function() {
+    var to = document.getElementById('testEmailTo').value.trim();
+    var subject = document.getElementById('testEmailSubject').value;
+    var body = document.getElementById('testEmailBody').value;
+    var btn = document.getElementById('testEmailBtn');
+    var result = document.getElementById('testEmailResult');
+
+    if (!to) {
+      result.textContent = '수신자 이메일을 입력하세요';
+      result.style.color = 'var(--red)';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '전송 중...';
+    result.textContent = '';
+
+    try {
+      var res = await ngrokFetch('/monitoring/api/test-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: to, subject: subject, body: body }),
+      });
+      var data = await res.json();
+      if (data.ok) {
+        result.textContent = '✓ 전송 성공' + (data.messageId ? ' (messageId: ' + data.messageId + ')' : '');
+        result.style.color = 'var(--green)';
+      } else {
+        result.textContent = '✗ ' + (data.error || '전송 실패');
+        result.style.color = 'var(--red)';
+      }
+    } catch (e) {
+      result.textContent = '✗ ' + (e.message || '전송 실패');
+      result.style.color = 'var(--red)';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '전송';
+    }
+  };
+
+  loadTestEmailConfig();
 })();
 </script>
 </body>

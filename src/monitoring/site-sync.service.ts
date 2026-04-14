@@ -27,6 +27,10 @@ export interface SiteSyncEvent {
   error?: string;
   attempt?: number;
   maxAttempts?: number;
+  /** unit-success 시 DB 가 실제 변경됐는지 여부 */
+  changed?: boolean;
+  /** unit-success 지만 smartcube_id 가 없는 등 이유로 실제 sync 를 건너뛴 경우 */
+  skipped?: boolean;
 }
 
 interface SiteSyncJob {
@@ -46,8 +50,11 @@ export interface SiteSyncGroupUnit {
   unitId: string;
   name: string;
   state: string;
-  overdue: boolean;
+  overlocked: boolean;
   ownerName: string;
+  /** DB 기준 view 에서만 채워짐 (호버 툴팁용) */
+  userName?: string;
+  userPhone?: string;
 }
 
 export interface SiteSyncUnitGroup {
@@ -60,7 +67,9 @@ interface SiteSyncUnitFilter {
   showBoxNos: number[];
 }
 
-const CONCURRENCY = 3;
+// 순차 처리: 병렬화는 setPtiUserEnableAllForGroup 등에서 교차 그룹 lock 을
+// 유발해 deadlock 이 발생. 순차 처리하면 근본적으로 deadlock 없음.
+const CONCURRENCY = 1;
 
 /**
  * STG `unit.state` → dashboard 의 3-state 어휘로 정규화.
@@ -98,7 +107,13 @@ export class SiteSyncService {
   ) {}
 
   /**
-   * STG 기준으로 지점의 전체 유닛 목록을 그룹별로 반환
+   * STG 기준으로 지점의 전체 유닛 목록을 그룹별로 반환.
+   *
+   * overlock 판정:
+   *   rental.customFields.smartcube_lockStatus === 'overlocked'
+   *
+   * active rental 전체를 bulk 조회 후 siteId 로 필터링해 rentalId → overlock
+   * 인덱스를 구축한다. 유닛별 개별 rental fetch 대비 수백 배 빠름.
    */
   async getStgUnits(
     officeCode: string,
@@ -106,28 +121,113 @@ export class SiteSyncService {
     const siteId = await this.sgApi.getSiteIdByOfficeCode(officeCode);
     if (!siteId) return { groups: [] };
 
-    const allUnits = await this.sgApi.getUnitsForSite(siteId);
-    const groupMap = new Map<string, SiteSyncGroupUnit[]>();
+    const [allUnits, allRentals] = await Promise.all([
+      this.sgApi.getUnitsForSite(siteId),
+      this.sgApi.getActiveRentals(),
+    ]);
 
+    const rentalInfoById = new Map<
+      string,
+      { overlocked: boolean; futureStart: boolean }
+    >();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    for (const rental of allRentals) {
+      if (rental.siteId !== siteId) continue;
+      const cf = (rental.customFields ?? {}) as Record<string, unknown>;
+      const startDate = rental.startDate;
+      const futureStart = !!(
+        startDate && new Date(`${startDate}T00:00:00`) > today
+      );
+      rentalInfoById.set(rental.id, {
+        overlocked: cf.smartcube_lockStatus === 'overlocked',
+        futureStart,
+      });
+    }
+
+    const groupMap = new Map<string, SiteSyncGroupUnit[]>();
     for (const unit of allUnits) {
       const parsed = parseSmartcubeId(unit.customFields?.smartcube_id);
       if (!parsed) continue;
+
+      const rentalId = (unit as { rentalId?: string }).rentalId;
+      const rentalInfo = rentalId ? rentalInfoById.get(rentalId) : undefined;
+      const canonical = canonicalizeUnitState(unit.state);
+
+      // DB 모델과 표시 일치시키기:
+      // - unit.state=blocked 지만 rental 없음 → DB useState=2 (빈칸) 로 표시
+      // - rental 이 미래 시작 → DB useState=3 (차단) 로 표시
+      let displayState: 'occupied' | 'blocked' | 'available' = canonical;
+      if (!rentalId && canonical === 'blocked') displayState = 'available';
+      if (rentalInfo?.futureStart) displayState = 'blocked';
+
+      const overlocked =
+        canonical === 'occupied' && rentalInfo ? rentalInfo.overlocked : false;
 
       const unitInfo: SiteSyncGroupUnit = {
         showBoxNo: parsed.showBoxNo,
         unitId: unit.id,
         name: unit.name,
-        state: canonicalizeUnitState(unit.state),
-        overdue: unit['overdue'] === true,
+        state: displayState,
+        overlocked,
         ownerName: '',
       };
 
       const existing = groupMap.get(parsed.groupCode);
-      if (existing) {
-        existing.push(unitInfo);
-      } else {
-        groupMap.set(parsed.groupCode, [unitInfo]);
-      }
+      if (existing) existing.push(unitInfo);
+      else groupMap.set(parsed.groupCode, [unitInfo]);
+    }
+
+    const groups = Array.from(groupMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([groupCode, units]) => ({
+        groupCode,
+        units: units.sort((a, b) => a.showBoxNo - b.showBoxNo),
+      }));
+
+    return { groups };
+  }
+
+  /**
+   * 호호락 DB 기준으로 지점의 전체 유닛 목록을 그룹별로 반환.
+   *
+   * state 매핑:
+   *   useState=1 → occupied
+   *   useState=2 → available
+   *   useState=3 → blocked
+   *
+   * overlock 판정:
+   *   isOverlocked=1
+   */
+  async getDbUnits(
+    officeCode: string,
+  ): Promise<{ groups: SiteSyncUnitGroup[] }> {
+    const prefix = 'strh' + officeCode;
+    const result = await this.syncLog.queryBoxMasterForGrid(prefix);
+
+    const groupMap = new Map<string, SiteSyncGroupUnit[]>();
+    for (const row of result) {
+      // areaCode = strh + officeCode(3자리) + groupCode(4자리) → slice(7)
+      const groupCode = row.areaCode.slice(7);
+      const state: 'occupied' | 'blocked' | 'available' =
+        row.useState === 1
+          ? 'occupied'
+          : row.useState === 3
+            ? 'blocked'
+            : 'available';
+      const unit: SiteSyncGroupUnit = {
+        showBoxNo: row.showBoxNo,
+        unitId: '', // DB 에는 STG unit.id 없음
+        name: String(row.showBoxNo),
+        state,
+        overlocked: row.isOverlocked === 1,
+        ownerName: '',
+        userName: row.userName || '',
+        userPhone: row.userPhone || '',
+      };
+      const existing = groupMap.get(groupCode);
+      if (existing) existing.push(unit);
+      else groupMap.set(groupCode, [unit]);
     }
 
     const groups = Array.from(groupMap.entries())
@@ -359,6 +459,9 @@ export class SiteSyncService {
         job.succeeded++;
         job.current++;
 
+        // result === null 이면 smartcube_id 미매핑 등으로 syncUnit 이 조기 return.
+        // 이 경우 "변경 없음" 이 아니라 "건너뜀" 으로 구분해 운영자 오해 방지.
+        const isSkipped = result === null;
         job.subject.next({
           type: 'unit-success',
           jobId: job.id,
@@ -368,6 +471,8 @@ export class SiteSyncService {
           total: job.total,
           attempt,
           maxAttempts: maxRetries,
+          changed: isSkipped ? false : (result?.changed ?? false),
+          skipped: isSkipped,
         });
 
         void this.syncLog.add({
