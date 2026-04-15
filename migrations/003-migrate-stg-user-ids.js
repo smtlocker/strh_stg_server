@@ -25,8 +25,7 @@ const https = require('https');
 const http = require('http');
 
 const sql = require('mssql');
-const { resolveSites, parseOfficesArg } = require('./lib/sites');
-const SITES = resolveSites(parseOfficesArg());
+const { resolveSites, parseOfficesArg, toDbOfficeCode } = require('./lib/sites');
 
 // ─── .env 로드 ───────────────────────────────────────────
 
@@ -167,6 +166,12 @@ async function main() {
 
   console.log('=== 003: STG User ID 매핑 (rental 기반) ===');
   console.log(`DRY_RUN=${DRY_RUN}`);
+
+  // STG 에서 site 목록 조회 (customFields.smartcube_siteCode 기반)
+  const SITES = await resolveSites(parseOfficesArg());
+  console.log(
+    `대상 지점: ${SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')}`,
+  );
   console.log('');
 
   // ── 1. MSSQL 연결 ──
@@ -278,9 +283,9 @@ async function main() {
           continue;
         }
 
-        // DB 유닛 매핑
-        const areaPrefix = site.officeCode.replace(/^0/, '');
-        const areaCode = 'strh' + areaPrefix + parsed.groupCode;
+        // DB 유닛 매핑. DB 의 areaCode 는 `strh<3자리officeCode><4자리groupCode>`
+        // 레거시 포맷이므로 4자리 site.officeCode 에서 마지막 3자리만 사용.
+        const areaCode = 'strh' + toDbOfficeCode(site.officeCode) + parsed.groupCode;
 
         if (DRY_RUN) {
           console.log(`  [MAP] ${unitName} → ${areaCode}:${parsed.showBoxNo} owner=${ownerId} (${userInfo.rawName})`);

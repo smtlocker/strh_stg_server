@@ -51,8 +51,11 @@ async function main() {
   const unitSync = app.get(UnitSyncHandler);
   const db = app.get(DatabaseService);
 
-  const { resolveSites, parseOfficesArg } = require(path.join(__dirname, 'lib', 'sites'));
-  const SITES = resolveSites(parseOfficesArg());
+  const { resolveSites, parseOfficesArg, toDbOfficeCode } = require(path.join(__dirname, 'lib', 'sites'));
+  const SITES = await resolveSites(parseOfficesArg());
+  console.log(
+    `대상 지점: ${SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')}`,
+  );
 
   const skippedRows = [];
   const failedRows = [];
@@ -93,8 +96,8 @@ async function main() {
     if (!isOccupied) {
       const parsed = parseSmartcubeId(smartcubeId);
       if (parsed) {
-        const areaPrefix = site.officeCode.replace(/^0/, '');
-        const areaCode = 'strh' + areaPrefix + parsed.groupCode;
+        // DB areaCode 는 `strh<3자리officeCode><4자리groupCode>` 레거시 포맷.
+        const areaCode = 'strh' + toDbOfficeCode(site.officeCode) + parsed.groupCode;
         const boxResult = await db.query(
           'SELECT ISNULL(useState, 0) AS useState, ISNULL(userCode, \'\') AS userCode, ISNULL(userName, \'\') AS userName FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo',
           { areaCode, showBoxNo: parsed.showBoxNo },

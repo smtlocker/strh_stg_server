@@ -45,38 +45,39 @@ phone+name 매칭 방식 대비 장점:
 
 ## 사이트-지점 매핑
 
-지점 정의는 `migrations/lib/sites.js` 에서 공유됩니다. 새 지점 추가 시 이 파일 하나만 수정하면
-002/003/004/005 가 모두 반영합니다.
+지점 정의는 **STG `/v1/admin/sites?include=customFields`** 로 런타임 조회합니다.
+각 site 의 `customFields.smartcube_siteCode` (4자리 문자열) 가 `officeCode` 로 사용됩니다.
+- 하드코딩 없음 — `migrations/lib/sites.js` 는 STG 에서 매번 fetch
+- 새 지점은 STG 콘솔에서 해당 site 의 `customFields.smartcube_siteCode` 를 설정하면 자동 포함
+- `customFields.smartcube_siteCode` 가 설정되지 않은 site 는 마이그레이션 대상에서 제외
 
-| 지점 | siteId | officeCode |
-|------|--------|-----------|
-| 송파 | `698ed8d861c38505daecc6b4` | `001` |
-| 마곡 | `69c217cd53c43d6dfe7266b0` | `002` |
-| 선릉 | `698eda4461c38505daee95eb` | `003` |
+> DB `tblBoxMaster.areaCode` 는 레거시 포맷 `strh<3자리officeCode><4자리groupCode>` 를 유지합니다.
+> 코드 내부는 4자리(`"0001"`), DB 쿼리는 3자리(`"001"`) 를 `toDbOfficeCode()` 로 변환해 사용합니다.
 
 ## 지점별 선택 실행
 
 특정 지점만 마이그레이션하고 그 결과만 확인하고 싶을 때 `--offices` CLI 인자를 사용합니다.
 
 ```bash
-# 송파 한 지점만
-npm run migrate -- --offices 001
+# 마곡 한 지점만 (smartcube_siteCode = 0002)
+npm run migrate -- --offices 0002
 
 # 송파 + 선릉
-npm run migrate -- --offices 001,003
+npm run migrate -- --offices 0001,0003
 
 # 개별 스크립트도 동일한 인자를 받음
-DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js --offices 001
+DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js --offices 0002
 ```
 
 동작:
 
-- **002 / 003 / 005** — `lib/sites.js` 의 `resolveSites(parseOfficesArg())` 를 호출해 대상 site
-  목록 자체가 좁아지므로 loop 가 해당 지점만 돌게 됩니다.
-- **004** — `tblBoxMaster` / `tblPTIUserInfo` 쿼리 WHERE 절에 `areaCode LIKE 'strh<code>%'`
-  와 `OfficeCode IN (...)` 필터가 붙어 다른 지점 PTI 는 건드리지 않습니다.
+- `--offices` 값은 **4자리 officeCode** (`smartcube_siteCode` 와 같은 값). 쉼표 구분.
+- **002 / 003 / 005** — `lib/sites.js` 가 STG 에서 매칭 site 만 반환하므로 loop 자체가 좁아집니다.
+- **004** — `tblBoxMaster` / `tblPTIUserInfo` 쿼리 WHERE 절에 `areaCode LIKE 'strh<3자리>%'` 와
+  `OfficeCode IN (...)` 필터가 붙어 다른 지점 PTI 는 건드리지 않습니다 (DB 는 3자리 레거시 포맷).
 - **001 (스키마 생성)** — 지점 무관. 항상 전체 실행.
-- **알 수 없는 officeCode** (예: `--offices 999`) 를 넘기면 즉시 throw 후 중단됩니다.
+- **알 수 없는 officeCode** (예: `--offices 9999`) 를 넘기면 즉시 throw 후 중단됩니다.
+- STG 에서 `customFields.smartcube_siteCode` 가 설정된 site 가 하나도 없으면 throw.
 
 ## 주의사항
 
@@ -107,6 +108,7 @@ DB 스냅샷 복원이 더 안전한 방식이라고 판단합니다.
 |------|------|
 | `migrate-YYYYMMDD-HHmmss.log` | 전체 실행 로그 (stdout + stderr) |
 | `migrate-YYYYMMDD-HHmmss-report.md` | 단계별 결과 요약 |
+| `002-no-match-*.csv` | 수동 확인: STG 유닛 ↔ DB `tblShowBoxNoDispInfo` 매핑 실패 |
 | `003-no-owner-*.csv` | 수동 확인: STG rental 에 ownerId 없음 |
 | `005-no-smartcube-id-*.csv` | 수동 확인: smartcube_id 미설정 유닛 |
 | `005-db-only-occupied-*.csv` | 수동 확인: DB 에만 입주 기록 (STG 없음) |

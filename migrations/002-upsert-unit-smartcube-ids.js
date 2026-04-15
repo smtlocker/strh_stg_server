@@ -33,7 +33,6 @@ const SG_BASE = process.env.SG_BASE_URL;
 const SG_KEY = process.env.SG_API_KEY;
 
 const { resolveSites, parseOfficesArg } = require('./lib/sites');
-const SITES = resolveSites(parseOfficesArg());
 
 const dbConfig = {
   server: process.env.DB_HOST,
@@ -75,6 +74,12 @@ async function main() {
   console.log(`DB: ${dbConfig.server}:${dbConfig.port}/${dbConfig.database}`);
   console.log(`STG: ${SG_BASE}\n`);
 
+  // STG 에서 site 목록 조회 (customFields.smartcube_siteCode 기반)
+  const SITES = await resolveSites(parseOfficesArg());
+  console.log(
+    `대상 지점: ${SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')}\n`,
+  );
+
   // DB 연결
   const pool = await sql.connect(dbConfig);
 
@@ -85,12 +90,14 @@ async function main() {
     `SELECT areaCode, showBoxNo, showBoxNoDisp, groupCode FROM tblShowBoxNoDispInfo WHERE showBoxNoDisp IS NOT NULL`,
   );
 
-  // officeCode → { showBoxNoDisp(lowercase) → { areaCode, showBoxNo, groupCode } }
+  // officeCode(4자리) → { showBoxNoDisp(lowercase) → { areaCode, showBoxNo, groupCode } }
+  // DB areaCode 의 3자리 officeCode 를 4자리로 정규화(padStart)해 site.officeCode 와
+  // 매칭 가능하게 맞춘다. (STG customFields.smartcube_siteCode 는 4자리 "0002" 포맷)
   const dbMap = {};
   for (const row of dbRows.recordset) {
     const ac = row.areaCode;
     if (!ac || ac.length < 8) continue;
-    const oc = ac.slice(4, 7); // officeCode (3자리)
+    const oc = ac.slice(4, 7).padStart(4, '0');
     if (!dbMap[oc]) dbMap[oc] = {};
     const key = String(row.showBoxNoDisp).toLowerCase();
     dbMap[oc][key] = { areaCode: ac, showBoxNo: row.showBoxNo, groupCode: row.groupCode };
@@ -119,6 +126,9 @@ async function main() {
       if (!match) {
         // DB에 이 unit이 없음. 운영자 수동 개입 필요 (showBoxNo 정합성 체크 결과와 동일).
         stats.noMatch++;
+        console.log(
+          `  [SKIP:NO_MATCH] ${site.name}|${site.officeCode}|${unitName}|${unitId}`,
+        );
         continue;
       }
 

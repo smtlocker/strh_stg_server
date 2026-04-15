@@ -17,7 +17,7 @@
 
 const path = require('path');
 const sql = require('mssql');
-const { resolveSites, parseOfficesArg } = require('./lib/sites');
+const { resolveSites, parseOfficesArg, toDbOfficeCode } = require('./lib/sites');
 
 try {
   require('dotenv').config({
@@ -30,9 +30,8 @@ try {
 const DRY_RUN = (process.env.DRY_RUN ?? 'true') !== 'false';
 // --offices 로 대상 지점을 좁힐 수 있다. 미지정 시 전체 DB 스캔(기존 동작).
 // SCOPED 판단은 CLI 인자 존재 여부로만 — 지점 개수가 늘어나도 의미가 안 꼬이게.
+// 실제 TARGET_SITES 는 STG API 호출이 필요하므로 main() 안에서 초기화.
 const CLI_OFFICES_RAW = parseOfficesArg();
-const TARGET_SITES = resolveSites(CLI_OFFICES_RAW);
-const TARGET_OFFICES = TARGET_SITES.map((s) => s.officeCode);
 const SCOPED = CLI_OFFICES_RAW != null;
 
 const dbConfig = {
@@ -61,12 +60,17 @@ function userKey(row) {
 async function main() {
   console.log('=== 004: PTI per-unit reconciliation ===');
   console.log(`DRY_RUN=${DRY_RUN}`);
+
+  // STG 에서 site 목록 조회 (customFields.smartcube_siteCode 기반). 4자리 officeCode.
+  const TARGET_SITES = await resolveSites(CLI_OFFICES_RAW);
+  const TARGET_OFFICES = TARGET_SITES.map((s) => s.officeCode);
   console.log(`대상 지점: ${SCOPED ? TARGET_OFFICES.join(', ') : '전체'}`);
 
   const pool = await sql.connect(dbConfig);
 
   // --offices 지정 시 WHERE 절에 officeCode/areaCode 필터 주입.
-  // areaCode 포맷: strh<officeCode 3자리><groupCode 4자리>. 'strh001%' 등 LIKE OR 조합.
+  // DB 레거시 포맷: areaCode `strh<3자리officeCode><4자리groupCode>`, OfficeCode 컬럼도 3자리.
+  // 4자리 site.officeCode 는 toDbOfficeCode() 로 마지막 3자리만 뽑아 쿼리에 전달.
   const areaCodeFilter = SCOPED
     ? ` AND (${TARGET_OFFICES.map((c, i) => `areaCode LIKE @areaPrefix${i}`).join(' OR ')})`
     : '';
@@ -77,8 +81,9 @@ async function main() {
   const bindOffices = (req) => {
     if (!SCOPED) return req;
     TARGET_OFFICES.forEach((code, i) => {
-      req.input(`areaPrefix${i}`, sql.NVarChar, `strh${code}%`);
-      req.input(`officeCode${i}`, sql.NVarChar, code);
+      const code3 = toDbOfficeCode(code);
+      req.input(`areaPrefix${i}`, sql.NVarChar, `strh${code3}%`);
+      req.input(`officeCode${i}`, sql.NVarChar, code3);
     });
     return req;
   };

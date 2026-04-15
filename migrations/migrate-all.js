@@ -8,6 +8,7 @@
  * 결과물 (logs/ 폴더):
  *   - migrate-YYYYMMDD-HHmmss.log                   상세 실행 로그
  *   - migrate-YYYYMMDD-HHmmss-report.md             마이그레이션 보고서
+ *   - 002-no-match-YYYYMMDD-HHmmss.csv              수동 확인: STG 유닛 ↔ DB showBoxNoDisp 매핑 실패
  *   - 003-no-owner-YYYYMMDD-HHmmss.csv              수동 확인: STG rental ownerId 누락
  *   - 005-no-smartcube-id-YYYYMMDD-HHmmss.csv       수동 확인: smartcube_id 미설정 유닛
  *   - 005-db-only-occupied-YYYYMMDD-HHmmss.csv      수동 확인: DB에만 점유 기록
@@ -31,28 +32,25 @@ if (fs.existsSync(envFile)) {
   });
 }
 
-// ── CLI 인자: --offices 001 / --offices=001,003 ───────────
+// ── CLI 인자: --offices 0001 / --offices=0001,0003 ─────────
 // 파싱 후 자식 프로세스 cmd 에 그대로 `--offices <value>` 로 전달한다.
-// 새 env 는 도입하지 않음.
+// 새 env 는 도입하지 않음. 실제 site 목록은 STG API 에서 async 로 조회해야
+// 하므로 대상 지점 라벨/검증은 run() IIFE 내부에서 한다.
 const { resolveSites, parseOfficesArg } = require('./lib/sites');
 const CLI_OFFICES = parseOfficesArg();
-const TARGET_SITES = resolveSites(CLI_OFFICES);
-const TARGET_OFFICES_LABEL = CLI_OFFICES
-  ? TARGET_SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')
-  : '전체 지점';
 // 자식 spawn 시 전달할 인자. 쉘 safe 를 위해 ' 로 감쌈.
 const OFFICES_FLAG = CLI_OFFICES ? ` --offices '${CLI_OFFICES.replace(/'/g, "'\\''")}'` : '';
 
 if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
 
 // ── 로그 로테이션 ─────────────────────────────────────────
-// 기본 30일 이상 된 migrate-* / 003-* / 005-* 파일 제거.
+// 기본 30일 이상 된 migrate-* / 002-* / 003-* / 005-* 파일 제거.
 // LOG_RETENTION_DAYS 환경변수로 조정 가능 (0 이면 비활성).
 (function rotateLogs() {
   const retentionDays = parseInt(process.env.LOG_RETENTION_DAYS ?? '30', 10);
   if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  const patterns = [/^migrate-\d{8}-\d{6}(\.log|-report\.md)$/, /^00[35]-.*-\d{8}-\d{6}\.csv$/];
+  const patterns = [/^migrate-\d{8}-\d{6}(\.log|-report\.md)$/, /^00[235]-.*-\d{8}-\d{6}\.csv$/];
   let removed = 0;
   for (const file of fs.readdirSync(LOGS_DIR)) {
     if (!patterns.some((p) => p.test(file))) continue;
@@ -88,6 +86,15 @@ const reportFile = path.join(LOGS_DIR, `migrate-${ts}-report.md`);
 // 진행 상황이 실시간 안 보이는 문제가 있어 streaming 으로 변경.
 
 const csvs = {
+  noMatch: {
+    path: path.join(LOGS_DIR, `002-no-match-${ts}.csv`),
+    header: 'site,officeCode,unitName,unitId\n',
+    // [SKIP:NO_MATCH] site|officeCode|unitName|unitId — 002 에서 STG unit 이
+    // DB tblShowBoxNoDispInfo 에 매칭 안 됨 (smartcube_id 세팅 불가).
+    pattern: /\[SKIP:NO_MATCH\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(\S+)/,
+    format: (m) => `${m[1]},${m[2]},${m[3]},${m[4]}\n`,
+    count: 0,
+  },
   noOwner: {
     path: path.join(LOGS_DIR, `003-no-owner-${ts}.csv`),
     header: 'site,officeCode,unitName,unitId\n',
@@ -223,6 +230,19 @@ const steps = [
 ];
 
 (async () => {
+  // STG 에서 site 목록 조회해 대상 지점 라벨 생성. customFields.smartcube_siteCode
+  // 가 없는 site 나 알 수 없는 officeCode 가 --offices 에 포함되면 여기서 throw.
+  let TARGET_OFFICES_LABEL;
+  try {
+    const TARGET_SITES = await resolveSites(CLI_OFFICES);
+    TARGET_OFFICES_LABEL = CLI_OFFICES
+      ? TARGET_SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')
+      : TARGET_SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ') + ' (전체)';
+  } catch (err) {
+    console.error(`[FATAL] 대상 지점 확인 실패: ${err.message}`);
+    process.exit(1);
+  }
+
   log(`마이그레이션 시작 (${steps.length}단계)`);
   log(`대상 지점: ${TARGET_OFFICES_LABEL}`);
   log(`로그 파일: ${logFile}`);
@@ -271,6 +291,12 @@ const steps = [
 ${stepResults.map((r) => `| ${r.name} | ${r.status} |`).join('\n')}
 
 ## 수동 확인 필요 항목
+
+### 002: DB 매핑 실패 (${csvs.noMatch.count}건)
+
+STG 유닛이 존재하지만 DB \`tblShowBoxNoDispInfo\` 에 매칭되는 \`showBoxNoDisp\` 가 없어 \`smartcube_id\` 를 세팅할 수 없음. 운영자 수동 확인 필요.
+
+파일: \`002-no-match-${ts}.csv\`
 
 ### 003: rental ownerId 누락 (${csvs.noOwner.count}건)
 
