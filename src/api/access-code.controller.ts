@@ -36,13 +36,13 @@ export class AccessCodeController {
   @ApiOperation({
     summary: '게이트 AccessCode 변경',
     description:
-      '호호락 통합 매니저가 특정 사용자의 특정 지점 게이트 PIN 을 변경한다. 흐름: ① 지점 내 AccessCode 중복 검사 → ② tblPTIUserInfo UPDATE (StgUserId+OfficeCode 기준) → ③ 해당 사용자의 활성 유닛(useState 1/3) tblBoxHistory 스냅샷 기록 → ④ STG `/v1/admin/unit-rentals` 에 `customFields.gate_code` 푸시. STG 동기화가 실패해도 DB 트랜잭션은 커밋된 상태로 `status: partial` 응답.',
+      '호호락 통합 매니저가 특정 사용자의 특정 지점 게이트 PIN 을 변경한다. 흐름: ① 지점 내 AccessCode 중복 검사 → ② tblPTIUserInfo UPDATE (StgUserId+OfficeCode 기준) → ③ 해당 사용자의 활성 유닛(useState 1/3) tblBoxHistory 스냅샷 기록 → ④ STG `/v1/admin/unit-rentals` 에 `customFields.gate_code` 푸시. **STG 호출까지 DB 트랜잭션 내부에서 수행**하며 어느 단계든 실패하면 DB 는 rollback 되고 `status: error` 와 사유가 반환된다.',
   })
   @ApiBody({ type: UpdateAccessCodeDto })
   @ApiResponse({
     status: 200,
     description:
-      'status 로 3가지 분기. ok = 성공, partial = DB 반영 후 STG 푸시 실패, error = 중복/PTI 미발견 등 업무 에러',
+      'status 로 2가지 분기. ok = DB + STG 모두 성공 / error = 중복 · PTI 미발견 · DB 에러 · STG 실패 — DB 는 롤백된 상태',
     schema: {
       oneOf: [
         {
@@ -53,22 +53,6 @@ export class AccessCodeController {
             status: { type: 'string', enum: ['ok'] },
           },
           example: { status: 'ok' },
-        },
-        {
-          title: 'partial',
-          type: 'object',
-          required: ['status', 'message', 'error'],
-          properties: {
-            status: { type: 'string', enum: ['partial'] },
-            message: {
-              type: 'string',
-              example: 'DB updated but STG sync failed',
-            },
-            error: {
-              type: 'string',
-              description: 'STG API 실패 메시지 원문',
-            },
-          },
         },
         {
           title: 'error',
@@ -92,7 +76,7 @@ export class AccessCodeController {
       `[updateAccessCode] stgUserId=${stgUserId} officeCode=${officeCode} accessCode=${accessCode}`,
     );
 
-    // 1. 지점 내 AccessCode 중복 확인
+    // 1. 지점 내 AccessCode 중복 확인 (트랜잭션 밖 — 읽기 전용)
     const dupCheck = await this.db.query<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM tblPTIUserInfo
        WHERE OfficeCode = @officeCode
@@ -108,9 +92,11 @@ export class AccessCodeController {
       };
     }
 
-    // 2. tblPTIUserInfo UPDATE (StgUserId + OfficeCode 기준)
+    // DB + STG 를 하나의 원자 단위로 — STG 실패 시 DB 도 rollback.
+    // trade-off: STG API 호출 동안 DB 트랜잭션이 열려있어 connection/lock 을 더 오래 잡는다.
     const transaction = await this.db.beginTransaction();
     try {
+      // 2. tblPTIUserInfo UPDATE (StgUserId + OfficeCode 기준)
       const updateResult = await new sql.Request(transaction)
         .input('stgUserId', sql.NVarChar, stgUserId)
         .input('officeCode', sql.NVarChar, officeCode)
@@ -158,23 +144,9 @@ export class AccessCodeController {
         );
       }
 
-      await transaction.commit();
-      this.logger.log(
-        `[updateAccessCode] DB updated: ${rowsAffected} PTI row(s), ${units.recordset.length} history snapshot(s)`,
-      );
-    } catch (err) {
-      await transaction.rollback();
-      this.logger.error(
-        `[updateAccessCode] Transaction failed: ${(err as Error).message}`,
-      );
-      throw err;
-    }
-
-    // 4. STG rental 동기화 — 해당 사용자의 해당 지점 rental에 accessCode 푸시
-    try {
+      // 4. STG rental 동기화 — 트랜잭션 내부. 실패 시 throw → catch 에서 rollback.
       const allRentals = await this.sgApi.getUserRentals(stgUserId);
       let syncCount = 0;
-
       for (const rental of allRentals) {
         const rUnit = await this.sgApi.getUnit(rental.unitId);
         const rParsed = await resolveUnitMapping(this.sgApi, rUnit);
@@ -186,21 +158,23 @@ export class AccessCodeController {
         syncCount++;
       }
 
+      // 5. 모두 성공 → commit
+      await transaction.commit();
       this.logger.log(
-        `[updateAccessCode] STG synced: ${syncCount} rental(s) updated`,
+        `[updateAccessCode] success: ${rowsAffected} PTI row(s), ${units.recordset.length} history snapshot(s), ${syncCount} STG rental(s)`,
       );
+      return { status: 'ok' };
     } catch (err) {
-      // STG 동기화 실패해도 DB는 이미 커밋됨 — 로그만 남기고 응답에 포함
-      this.logger.error(
-        `[updateAccessCode] STG sync failed: ${(err as Error).message}`,
-      );
-      return {
-        status: 'partial',
-        message: 'DB updated but STG sync failed',
-        error: (err as Error).message,
-      };
+      const message = (err as Error).message || String(err);
+      try {
+        await transaction.rollback();
+      } catch (rollbackErr) {
+        this.logger.warn(
+          `[updateAccessCode] rollback also failed: ${(rollbackErr as Error).message}`,
+        );
+      }
+      this.logger.error(`[updateAccessCode] rolled back: ${message}`);
+      return { status: 'error', message };
     }
-
-    return { status: 'ok' };
   }
 }
