@@ -11,12 +11,14 @@ const fs = require('fs');
 const path = require('path');
 const sql = require('mssql');
 
-const env = {};
+// .env 를 process.env 에 load. 이미 shell 에서 export 된 값은 덮어쓰지 않음
+// (shell override 가 항상 이긴다). 이 규칙이 깨지면 test DB 격리가 불가능해지고
+// 실수로 prod 에 쿼리가 꽂힐 수 있으므로 반드시 `!process.env[key]` 가드 유지.
 fs.readFileSync(path.join(__dirname, '..', '.env'), 'utf8')
   .split('\n')
   .forEach((l) => {
     const m = l.match(/^([^#=][^=]*)=(.*)$/);
-    if (m) env[m[1].trim()] = m[2].trim();
+    if (m && !process.env[m[1].trim()]) process.env[m[1].trim()] = m[2].trim();
   });
 
 async function main() {
@@ -39,13 +41,14 @@ async function main() {
   console.log(`[run-sql] ${batches.length} batch(es) detected`);
 
   const pool = await sql.connect({
-    server: env.DB_HOST,
-    port: parseInt(env.DB_PORT, 10),
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: env.DB_NAME,
+    server: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT, 10),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
     options: { encrypt: false, trustServerCertificate: true },
   });
+  console.log(`  [run-sql] target: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
 
   let batchIdx = 0;
   for (const batch of batches) {

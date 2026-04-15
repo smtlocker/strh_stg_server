@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * 004: STG User ID 매핑 스크립트 (rental 기반)
+ * 003: STG User ID 매핑 스크립트 (rental 기반)
  *
  * STG 사이트별 유닛을 순회하며, occupied 유닛의 rental.ownerId를
  * tblPTIUserInfo.StgUserId 및 tblBoxMaster.userCode에 세팅합니다.
  *
- * rental.ownerId를 source of truth로 사용하므로 006과 동일한 stgUserId가
- * 세팅됩니다. 이를 통해 006 sync 시 findExistingAccessCode가 기존
- * AccessCode를 찾아 재사용할 수 있습니다.
+ * rental.ownerId를 source of truth로 사용하므로 005 site-sync 와 동일한
+ * stgUserId 가 세팅됩니다. 이를 통해 005 sync 시 findExistingAccessCode 가
+ * 기존 AccessCode 를 찾아 재사용할 수 있습니다.
  *
  * 사용법:
- *   node migrations/004-migrate-stg-user-ids.js                # dry-run
- *   DRY_RUN=false node migrations/004-migrate-stg-user-ids.js  # 실제 실행
+ *   node migrations/003-migrate-stg-user-ids.js                            # dry-run
+ *   DRY_RUN=false node migrations/003-migrate-stg-user-ids.js              # 실제 실행
+ *   DRY_RUN=false node migrations/003-migrate-stg-user-ids.js --offices 001  # 지점 제한
  *
  * 환경변수:
  *   DRY_RUN   - true(기본) / false
@@ -24,7 +25,8 @@ const https = require('https');
 const http = require('http');
 
 const sql = require('mssql');
-const { SITES } = require('./lib/sites');
+const { resolveSites, parseOfficesArg } = require('./lib/sites');
+const SITES = resolveSites(parseOfficesArg());
 
 // ─── .env 로드 ───────────────────────────────────────────
 
@@ -37,16 +39,20 @@ function loadEnv() {
     throw new Error(`.env 파일을 찾을 수 없습니다: ${envPath}`);
   }
 
+  // .env 파일값은 shell env 에 이미 설정돼있지 않은 경우에만 process.env 에 주입.
+  // 이 순서가 깨지면 shell override (예: DB_HOST=localhost) 가 먹히지 않아
+  // test DB 격리가 불가능해지고 prod 에 잘못 쿼리가 꽂힐 수 있다.
   const content = fs.readFileSync(envPath, 'utf8');
-  const env = {};
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eqIdx = trimmed.indexOf('=');
     if (eqIdx === -1) continue;
-    env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+    const key = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim();
+    if (!process.env[key]) process.env[key] = value;
   }
-  return env;
+  return process.env;
 }
 
 // ─── 유틸리티 ────────────────────────────────────────────
@@ -159,7 +165,7 @@ async function main() {
   const DRY_RUN = (process.env.DRY_RUN ?? 'true') !== 'false';
   const env = loadEnv();
 
-  console.log('=== 004: STG User ID 매핑 (rental 기반) ===');
+  console.log('=== 003: STG User ID 매핑 (rental 기반) ===');
   console.log(`DRY_RUN=${DRY_RUN}`);
   console.log('');
 

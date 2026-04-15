@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 006: PTI per-unit reconciliation
+ * 004: PTI per-unit reconciliation
  *
  * 목적:
  * - 사용자×유닛 단위 PTI row를 BoxMaster 배정 상태(useState IN (1,3))와 맞춘다.
@@ -8,10 +8,16 @@
  * - stale PTI row(더 이상 배정되지 않은 유닛)는 제거한다.
  *
  * 기본은 dry-run 이며, 실제 반영하려면 DRY_RUN=false 로 실행한다.
+ *
+ * 사용법:
+ *   node migrations/004-reconcile-pti-per-unit.js                              # dry-run
+ *   DRY_RUN=false node migrations/004-reconcile-pti-per-unit.js                # 실제 실행
+ *   DRY_RUN=false node migrations/004-reconcile-pti-per-unit.js --offices 001  # 지점 제한
  */
 
 const path = require('path');
 const sql = require('mssql');
+const { resolveSites, parseOfficesArg } = require('./lib/sites');
 
 try {
   require('dotenv').config({
@@ -22,6 +28,12 @@ try {
 }
 
 const DRY_RUN = (process.env.DRY_RUN ?? 'true') !== 'false';
+// --offices 로 대상 지점을 좁힐 수 있다. 미지정 시 전체 DB 스캔(기존 동작).
+// SCOPED 판단은 CLI 인자 존재 여부로만 — 지점 개수가 늘어나도 의미가 안 꼬이게.
+const CLI_OFFICES_RAW = parseOfficesArg();
+const TARGET_SITES = resolveSites(CLI_OFFICES_RAW);
+const TARGET_OFFICES = TARGET_SITES.map((s) => s.officeCode);
+const SCOPED = CLI_OFFICES_RAW != null;
 
 const dbConfig = {
   server: process.env.DB_HOST,
@@ -47,28 +59,47 @@ function userKey(row) {
 }
 
 async function main() {
-  console.log('=== 006: PTI per-unit reconciliation ===');
+  console.log('=== 004: PTI per-unit reconciliation ===');
   console.log(`DRY_RUN=${DRY_RUN}`);
+  console.log(`대상 지점: ${SCOPED ? TARGET_OFFICES.join(', ') : '전체'}`);
 
   const pool = await sql.connect(dbConfig);
 
+  // --offices 지정 시 WHERE 절에 officeCode/areaCode 필터 주입.
+  // areaCode 포맷: strh<officeCode 3자리><groupCode 4자리>. 'strh001%' 등 LIKE OR 조합.
+  const areaCodeFilter = SCOPED
+    ? ` AND (${TARGET_OFFICES.map((c, i) => `areaCode LIKE @areaPrefix${i}`).join(' OR ')})`
+    : '';
+  const officeCodeFilter = SCOPED
+    ? ` AND OfficeCode IN (${TARGET_OFFICES.map((_, i) => `@officeCode${i}`).join(', ')})`
+    : '';
+
+  const bindOffices = (req) => {
+    if (!SCOPED) return req;
+    TARGET_OFFICES.forEach((code, i) => {
+      req.input(`areaPrefix${i}`, sql.NVarChar, `strh${code}%`);
+      req.input(`officeCode${i}`, sql.NVarChar, code);
+    });
+    return req;
+  };
+
   try {
     const boxes = (
-      await pool.request().query(`
+      await bindOffices(pool.request()).query(`
         SELECT areaCode, boxNo, showBoxNo, useState, userCode, userName, userPhone
         FROM tblBoxMaster
         WHERE useState IN (1, 3)
           AND userPhone IS NOT NULL
-          AND userPhone <> ''
+          AND userPhone <> ''${areaCodeFilter}
       `)
     ).recordset;
 
     const ptis = (
-      await pool.request().query(`
+      await bindOffices(pool.request()).query(`
         SELECT AccessCode, SiteCode, OfficeCode, GroupCode, AreaCode, showBoxNo,
                UserPhone, UserName, Enable, UserType, StgUserId, UpdateTime, CreateTime
         FROM tblPTIUserInfo
-        WHERE UserType = 'C'
+        WHERE UserType = 'C'${officeCodeFilter}
       `)
     ).recordset;
 

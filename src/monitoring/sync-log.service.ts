@@ -374,8 +374,6 @@ export class SyncLogService {
    * tblScheduledJob.eventType을 기존 dashboard 카테고리('moveIn'|'moveOut')로 매핑.
    * - moveIn.activate → moveIn
    * - moveOut.block   → moveOut
-   * (moveOut.resetComplete 는 즉시 reset 정책 도입 후 폐지됨. 과거 행이 잔존할
-   *  경우에도 moveOut. 으로 시작하므로 startsWith 매칭으로 자동 분류된다.)
    */
   private mapScheduleEventToDashboardType(eventType: string): string {
     if (eventType.startsWith('moveIn.')) return 'moveIn';

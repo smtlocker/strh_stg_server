@@ -263,7 +263,6 @@ export class MoveInHandler implements WebhookHandler {
       // 새 임대가 시작된다는 것은 이전 임대 사이클이 완전히 종료됐다는 뜻이므로,
       // 남아있는 moveOut.block job은 실행되어선 안 된다.
       // (isOverlocked=1 인 상태에서 stale moveOut.block 스케줄이 stuck 되는 것 방지)
-      // moveOut.resetComplete 는 즉시 reset 정책 도입 후 enum에서 제거됨.
       const cancelledStale = await this.scheduledJobRepo.cancelPendingForUnit(
         transaction,
         areaCode,

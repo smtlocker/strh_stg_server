@@ -280,7 +280,7 @@ describe('MoveOutHandler', () => {
   });
 
   // -------------------------------------------------------------------------
-  // handleCompleted — "즉시 reset 정책" 도입 후 (resetComplete 스케줄 단계 폐지)
+  // handleCompleted — 즉시 reset 정책
   // -------------------------------------------------------------------------
   describe('handleCompleted (job.unit_moveOut.completed)', () => {
     const payload = {
@@ -358,7 +358,7 @@ describe('MoveOutHandler', () => {
         false, // wasOverlocked
       );
 
-      // 3) moveOut.resetComplete 스케줄 등록 없음
+      // 3) 스케줄 등록 없음 — 즉시 reset 정책이라 후속 스케줄 불필요
       expect(mockScheduledJobRepo.create).not.toHaveBeenCalled();
 
       // 4) 기존 pending moveOut.block + moveIn.activate 모두 cancel

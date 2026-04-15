@@ -13,9 +13,10 @@
  *   - 이미 신 형식(`groupCode:showBoxNo` 매칭)이면 skip
  *
  * 사용법:
- *   node migrations/002-upsert-unit-smartcube-ids.js              # dry-run
- *   DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js # 실제 실행
- *   ENV_PATH=/path/to/prod.env DRY_RUN=false node ...             # 프로덕션
+ *   node migrations/002-upsert-unit-smartcube-ids.js                              # dry-run
+ *   DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js                # 실제 실행
+ *   DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js --offices 001  # 지점 제한
+ *   ENV_PATH=/path/to/prod.env DRY_RUN=false node ...                             # 프로덕션
  */
 
 const path = require('path');
@@ -31,7 +32,8 @@ const DELAY_MS = parseInt(process.env.DELAY_MS ?? '100', 10);
 const SG_BASE = process.env.SG_BASE_URL;
 const SG_KEY = process.env.SG_API_KEY;
 
-const { SITES } = require('./lib/sites');
+const { resolveSites, parseOfficesArg } = require('./lib/sites');
+const SITES = resolveSites(parseOfficesArg());
 
 const dbConfig = {
   server: process.env.DB_HOST,
@@ -68,7 +70,7 @@ function sleep(ms) {
 }
 
 async function main() {
-  console.log(`=== 002: 유닛 smartcube_id upsert ===`);
+  console.log('=== 002: 유닛 smartcube_id upsert ===');
   console.log(`DRY_RUN=${DRY_RUN}  DELAY=${DELAY_MS}ms`);
   console.log(`DB: ${dbConfig.server}:${dbConfig.port}/${dbConfig.database}`);
   console.log(`STG: ${SG_BASE}\n`);

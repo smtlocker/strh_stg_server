@@ -8,10 +8,10 @@
  * 결과물 (logs/ 폴더):
  *   - migrate-YYYYMMDD-HHmmss.log                   상세 실행 로그
  *   - migrate-YYYYMMDD-HHmmss-report.md             마이그레이션 보고서
- *   - 004-no-owner-YYYYMMDD-HHmmss.csv              수동 확인: STG rental ownerId 누락
- *   - 006-no-smartcube-id-YYYYMMDD-HHmmss.csv       수동 확인: smartcube_id 미설정 유닛
- *   - 006-db-only-occupied-YYYYMMDD-HHmmss.csv      수동 확인: DB에만 점유 기록
- *   - 006-sync-failed-YYYYMMDD-HHmmss.csv           수동 확인: 동기화 실패 유닛
+ *   - 003-no-owner-YYYYMMDD-HHmmss.csv              수동 확인: STG rental ownerId 누락
+ *   - 005-no-smartcube-id-YYYYMMDD-HHmmss.csv       수동 확인: smartcube_id 미설정 유닛
+ *   - 005-db-only-occupied-YYYYMMDD-HHmmss.csv      수동 확인: DB에만 점유 기록
+ *   - 005-sync-failed-YYYYMMDD-HHmmss.csv           수동 확인: 동기화 실패 유닛
  */
 
 const { spawn } = require('child_process');
@@ -31,16 +31,28 @@ if (fs.existsSync(envFile)) {
   });
 }
 
+// ── CLI 인자: --offices 001 / --offices=001,003 ───────────
+// 파싱 후 자식 프로세스 cmd 에 그대로 `--offices <value>` 로 전달한다.
+// 새 env 는 도입하지 않음.
+const { resolveSites, parseOfficesArg } = require('./lib/sites');
+const CLI_OFFICES = parseOfficesArg();
+const TARGET_SITES = resolveSites(CLI_OFFICES);
+const TARGET_OFFICES_LABEL = CLI_OFFICES
+  ? TARGET_SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')
+  : '전체 지점';
+// 자식 spawn 시 전달할 인자. 쉘 safe 를 위해 ' 로 감쌈.
+const OFFICES_FLAG = CLI_OFFICES ? ` --offices '${CLI_OFFICES.replace(/'/g, "'\\''")}'` : '';
+
 if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
 
 // ── 로그 로테이션 ─────────────────────────────────────────
-// 기본 30일 이상 된 migrate-* / 004-* / 005-* / 006-* 파일 제거.
+// 기본 30일 이상 된 migrate-* / 003-* / 005-* 파일 제거.
 // LOG_RETENTION_DAYS 환경변수로 조정 가능 (0 이면 비활성).
 (function rotateLogs() {
   const retentionDays = parseInt(process.env.LOG_RETENTION_DAYS ?? '30', 10);
   if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  const patterns = [/^migrate-\d{8}-\d{6}(\.log|-report\.md)$/, /^00[456]-.*-\d{8}-\d{6}\.csv$/];
+  const patterns = [/^migrate-\d{8}-\d{6}(\.log|-report\.md)$/, /^00[35]-.*-\d{8}-\d{6}\.csv$/];
   let removed = 0;
   for (const file of fs.readdirSync(LOGS_DIR)) {
     if (!patterns.some((p) => p.test(file))) continue;
@@ -77,7 +89,7 @@ const reportFile = path.join(LOGS_DIR, `migrate-${ts}-report.md`);
 
 const csvs = {
   noOwner: {
-    path: path.join(LOGS_DIR, `004-no-owner-${ts}.csv`),
+    path: path.join(LOGS_DIR, `003-no-owner-${ts}.csv`),
     header: 'site,officeCode,unitName,unitId\n',
     // [SKIP:NO_OWNER] site|officeCode|unitName|unitId
     pattern: /\[SKIP:NO_OWNER\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(\S+)/,
@@ -85,21 +97,21 @@ const csvs = {
     count: 0,
   },
   noSmartId: {
-    path: path.join(LOGS_DIR, `006-no-smartcube-id-${ts}.csv`),
+    path: path.join(LOGS_DIR, `005-no-smartcube-id-${ts}.csv`),
     header: 'site,unitName,unitId,stgState\n',
     pattern: /SKIP:NO_SMARTCUBE_ID\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/,
     format: (m) => `${m[1]},${m[2]},${m[3]},${m[4]}\n`,
     count: 0,
   },
   dbOnly: {
-    path: path.join(LOGS_DIR, `006-db-only-occupied-${ts}.csv`),
+    path: path.join(LOGS_DIR, `005-db-only-occupied-${ts}.csv`),
     header: 'site,areaCode,showBoxNo,unitName,stgState,dbUserCode,dbUserName\n',
     pattern: /SKIP:DB_ONLY_OCCUPIED\]\s+([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|(.+)/,
     format: (m) => `${m[1]},${m[2]},${m[3]},${m[4]},${m[5]},${m[6]},"${m[7]}"\n`,
     count: 0,
   },
   syncFail: {
-    path: path.join(LOGS_DIR, `006-sync-failed-${ts}.csv`),
+    path: path.join(LOGS_DIR, `005-sync-failed-${ts}.csv`),
     header: 'site,unitName,smartcubeId,error\n',
     pattern: /FAIL:SYNC\]\s+([^|]+)\|([^|]+)\|([^|]+)\|(.+)/,
     format: (m) => `${m[1]},${m[2]},${m[3]},"${m[4]}"\n`,
@@ -204,15 +216,15 @@ function runStep(step, idx, total) {
 
 const steps = [
   { name: '001 스키마 생성', cmd: `node migrations/run-sql.js migrations/001-init-schema.sql` },
-  { name: '002 스케줄 백필', cmd: `node migrations/run-sql.js migrations/002-backfill-scheduled-jobs.sql` },
-  { name: '003 STG 유닛 ID 매핑', cmd: `DRY_RUN=false node migrations/003-upsert-unit-smartcube-ids.js` },
-  { name: '004 STG 사용자 ID 매핑', cmd: `DRY_RUN=false node migrations/004-migrate-stg-user-ids.js` },
-  { name: '005 PTI 정합성 보정', cmd: `DRY_RUN=false node migrations/005-reconcile-pti-per-unit.js` },
-  { name: '006 전체 사이트 동기화', cmd: `DRY_RUN=false node migrations/006-site-sync.js` },
+  { name: '002 STG 유닛 ID 매핑', cmd: `DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js${OFFICES_FLAG}` },
+  { name: '003 STG 사용자 ID 매핑', cmd: `DRY_RUN=false node migrations/003-migrate-stg-user-ids.js${OFFICES_FLAG}` },
+  { name: '004 PTI 정합성 보정', cmd: `DRY_RUN=false node migrations/004-reconcile-pti-per-unit.js${OFFICES_FLAG}` },
+  { name: '005 전체 사이트 동기화', cmd: `DRY_RUN=false node migrations/005-site-sync.js${OFFICES_FLAG}` },
 ];
 
 (async () => {
   log(`마이그레이션 시작 (${steps.length}단계)`);
+  log(`대상 지점: ${TARGET_OFFICES_LABEL}`);
   log(`로그 파일: ${logFile}`);
   log('');
 
@@ -249,7 +261,8 @@ const steps = [
 
 - 실행일: ${date}
 - 대상 DB: \`${dbName}\` (${dbHost}:${dbPort})
-- 실행 방법: \`npm run migrate\`
+- 대상 지점: ${TARGET_OFFICES_LABEL}
+- 실행 방법: \`npm run migrate${CLI_OFFICES ? ` -- --offices ${CLI_OFFICES}` : ''}\`
 
 ## 결과: ${failed ? '실패' : '전체 성공'}
 
@@ -259,29 +272,29 @@ ${stepResults.map((r) => `| ${r.name} | ${r.status} |`).join('\n')}
 
 ## 수동 확인 필요 항목
 
-### 004: rental ownerId 누락 (${csvs.noOwner.count}건)
+### 003: rental ownerId 누락 (${csvs.noOwner.count}건)
 
 STG occupied 유닛에 rental.ownerId 가 없어 StgUserId 를 세팅할 수 없음. STG 데이터 이슈로 STG 측 확인 필요.
 
-파일: \`004-no-owner-${ts}.csv\`
+파일: \`003-no-owner-${ts}.csv\`
 
-### 006: smartcube_id 미설정 (${csvs.noSmartId.count}건)
+### 005: smartcube_id 미설정 (${csvs.noSmartId.count}건)
 
-STG 에 유닛이 존재하지만 smartcube_id 가 설정되지 않아 DB 와 매핑 불가. 003 단계에서 매핑되지 않은 유닛.
+STG 에 유닛이 존재하지만 smartcube_id 가 설정되지 않아 DB 와 매핑 불가. 002 단계에서 매핑되지 않은 유닛.
 
-파일: \`006-no-smartcube-id-${ts}.csv\`
+파일: \`005-no-smartcube-id-${ts}.csv\`
 
-### 006: DB 에만 입주 데이터 존재 (${csvs.dbOnly.count}건)
+### 005: DB 에만 입주 데이터 존재 (${csvs.dbOnly.count}건)
 
 STG 에는 rental 이 없지만 DB 에 입주 상태(useState=1)인 유닛. 기존 호호락 데이터일 수 있으므로 동기화에서 제외됨. 수동 확인 필요.
 
-파일: \`006-db-only-occupied-${ts}.csv\`
+파일: \`005-db-only-occupied-${ts}.csv\`
 
-### 006: 동기화 실패 (${csvs.syncFail.count}건)
+### 005: 동기화 실패 (${csvs.syncFail.count}건)
 
 사이트 동기화 중 에러가 발생한 유닛. 수동 재동기화 필요.
 
-파일: \`006-sync-failed-${ts}.csv\`
+파일: \`005-sync-failed-${ts}.csv\`
 
 ## 상세 로그
 

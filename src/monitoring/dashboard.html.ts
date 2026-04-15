@@ -720,8 +720,6 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     'unit.synced': '유닛 동기화',
     'user.synced': '사용자 동기화',
     'scheduler.unit_moveOut.blocked': '퇴거 차단(스케줄러)',
-    // 과거 sync log 잔존 표시용 — 즉시 reset 정책 도입 후 신규 발생 없음
-    'job.unit_moveOut.resetCompleted': '퇴거 초기화(레거시)',
     'user.updated': '고객 정보 변경',
     'user.created': '고객 생성',
     'webhook.retried': '웹훅 재시도'

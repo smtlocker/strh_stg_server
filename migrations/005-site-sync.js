@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 006: 전체 사이트 동기화
+ * 005: 전체 사이트 동기화
  *
  * STG 유닛을 순회하며 DB 상태를 STG에 맞춰 동기화.
  * NestJS 앱을 bootstrap하여 기존 UnitSyncHandler.syncUnit()을 호출.
@@ -10,8 +10,9 @@
  * - smartcube_id 없는 유닛 → skip
  *
  * 사용법:
- *   node migrations/006-site-sync.js          # dry-run
- *   DRY_RUN=false node migrations/006-site-sync.js  # 실제 실행
+ *   node migrations/005-site-sync.js                              # dry-run
+ *   DRY_RUN=false node migrations/005-site-sync.js                # 실제 실행
+ *   DRY_RUN=false node migrations/005-site-sync.js --offices 001  # 지점 제한
  *
  * 환경변수:
  *   CONCURRENCY   병렬 처리 동시성 (기본 5)
@@ -29,7 +30,7 @@ process.env.DISABLE_SCHEDULER = 'true';
 const DRY_RUN = (process.env.DRY_RUN ?? 'true') !== 'false';
 
 async function main() {
-  console.log('=== 006: 전체 사이트 동기화 ===');
+  console.log('=== 005: 전체 사이트 동기화 ===');
   console.log(`DRY_RUN=${DRY_RUN}`);
 
   const startTime = Date.now();
@@ -50,7 +51,8 @@ async function main() {
   const unitSync = app.get(UnitSyncHandler);
   const db = app.get(DatabaseService);
 
-  const { SITES } = require(path.join(__dirname, 'lib', 'sites'));
+  const { resolveSites, parseOfficesArg } = require(path.join(__dirname, 'lib', 'sites'));
+  const SITES = resolveSites(parseOfficesArg());
 
   const skippedRows = [];
   const failedRows = [];
