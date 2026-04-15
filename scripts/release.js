@@ -76,7 +76,10 @@ async function ensureNode() {
 
   console.log('       압축 해제...');
   const tempDir = path.join(RELEASE, '.node-temp');
-  execSync(`unzip -q "${zipPath}" -d "${tempDir}"`, { stdio: 'pipe' });
+  // Windows 10 (1803+) 내장 bsdtar 가 zip 을 처리한다. `unzip` 은 Windows 기본
+  // 설치에 없어 macOS/Linux/Windows 모두에서 동작하는 `tar -xf` 로 통일.
+  fs.mkdirSync(tempDir, { recursive: true });
+  execSync(`tar -xf "${zipPath}" -C "${tempDir}"`, { stdio: 'pipe' });
   fs.renameSync(path.join(tempDir, NODE_ARCHIVE), nodeDir);
   fs.rmSync(tempDir, { recursive: true });
 }
