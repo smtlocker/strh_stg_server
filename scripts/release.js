@@ -84,6 +84,27 @@ async function ensureNode() {
   fs.rmSync(tempDir, { recursive: true });
 }
 
+function getDirSize(dir) {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) total += getDirSize(p);
+    else if (entry.isFile()) total += fs.statSync(p).size;
+  }
+  return total;
+}
+
+function formatSize(bytes) {
+  const units = ['B', 'K', 'M', 'G', 'T'];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)}${units[i]}`;
+}
+
 function generateBatchFiles() {
   // macOS 에서 npm ci 하면 .bin/ 에 Unix symlink 가 생기므로 Windows 에서 동작 안 함.
   // node.exe 로 pm2 bin 을 직접 실행하는 방식으로 우회.
@@ -194,8 +215,8 @@ async function main() {
   console.log('[6/6] 배치 파일 생성...');
   generateBatchFiles();
 
-  // Summary
-  const size = execSync(`du -sh "${RELEASE}"`, { encoding: 'utf8' }).trim().split('\t')[0];
+  // Summary — `du` 는 Windows 기본에 없으므로 Node.js 로 직접 크기 계산.
+  const size = formatSize(getDirSize(RELEASE));
   console.log('');
   console.log('=== Release 빌드 완료 ===');
   console.log(`출력: release/`);
