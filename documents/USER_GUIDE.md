@@ -1,7 +1,9 @@
-# SmartCube Sync Server
+# SmartCube Sync Server — 사용자 가이드
 
-Storeganise(STG) ↔ 호호락 MSSQL 동기화 NestJS 백엔드. STG webhook 을 받아
-DB 상태를 갱신하고, 대시보드에서 결과를 실시간으로 확인합니다.
+> Storeganise(STG) ↔ 호호락 MSSQL 동기화 NestJS 백엔드. STG webhook 을 받아
+> DB 상태를 갱신하고, 대시보드에서 결과를 실시간으로 확인합니다.
+>
+> 본 문서는 운영자가 서버를 설치·구동·관리하기 위한 전 과정을 담은 사용자 가이드입니다.
 
 ## 기능
 
@@ -46,7 +48,7 @@ SMTP_HOST=smtp.daum.net                             # 예: smtp.kakao.com
 SMTP_PORT=465                                       # 465=SSL, 587=STARTTLS
 SMTP_USER=ejunokl                                   # SMTP 로그인 계정
 SMTP_PASS=fghldbhvvlntmofq                          # SMTP 비밀번호 또는 앱 비밀번호
-SMTP_FROM=martCube Alerts <ejunokl@daum.net>        # 예: SmartCube Alerts <alerts@example.com>
+SMTP_FROM=SmartCube Alerts <ejunokl@daum.net>       # 예: SmartCube Alerts <alerts@example.com>
 ```
 
 > `DB_*`, `SG_*`, `SMTP_*` 는 프로덕션 환경 값으로 반드시 교체하세요.
@@ -59,6 +61,8 @@ SMTP_FROM=martCube Alerts <ejunokl@daum.net>        # 예: SmartCube Alerts <ale
 | 시작 | `start-server.bat` 더블클릭 |
 | 중지 | `stop-server.bat` 더블클릭 |
 | 재시작 | `stop-server.bat` 후 `start-server.bat` |
+| 상태 확인 | `status-server.bat` 더블클릭 (PM2 프로세스 목록 + 상태) |
+| PM2 에서 제거 | `clear-server.bat` 더블클릭 (`smartcube-sync` 등록 해제) |
 
 `start-server.bat` 은 PM2 에 `smartcube-sync` 라는 이름으로 프로세스를 등록하고
 실행 상태를 출력합니다. PM2 는 release 폴더 안의 Node.js 포터블(`.node`) 과
@@ -116,7 +120,7 @@ npm run migrate
 ```
 
 DB 스키마 생성 + 데이터 마이그레이션을 순차 실행합니다. 상세는
-[`migrations/README.md`](migrations/README.md) 참조. **납품 초기 설정과 스키마 변경을
+[`migrations/README.md`](../migrations/README.md) 참조. **납품 초기 설정과 스키마 변경을
 포함한 버전 업데이트 시 개발사가 직접 실행**합니다.
 
 ## 개발
@@ -130,6 +134,6 @@ npm run lint         # 린트
 
 ## 통합 명세 (납품 인계용)
 
-- **DB 추가 스키마/마이그레이션**: [`migrations/README.md`](migrations/README.md) — 신규 테이블/컬럼/마이그레이션 6단계
-- **STG 커스텀 필드 contract**: [`documents/STG_Custom_Fields.md`](documents/STG_Custom_Fields.md) — Storeganise `customFields` 에 sync server 가 정의/사용하는 필드 명세 (owner / reader / trigger)
+- **DB 추가 스키마/마이그레이션**: [`migrations/README.md`](../migrations/README.md) — 신규 테이블/컬럼/마이그레이션 5단계 (지점별 `--offices` 옵션 지원)
+- **STG 커스텀 필드 contract**: [`STG_Custom_Fields.md`](STG_Custom_Fields.md) — Storeganise `customFields` 에 sync server 가 정의/사용하는 필드 명세 (owner / reader / trigger)
 - **API 명세**: 서버 실행 후 `/api-docs` (Swagger UI)

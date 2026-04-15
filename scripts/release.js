@@ -160,12 +160,59 @@ echo 서버가 중지되었습니다.
 pause
 `;
 
+  const statusBat = `@echo off
+chcp 65001 >nul
+setlocal
+
+set "ROOT_DIR=%~dp0"
+set "NODE_DIR=%ROOT_DIR%.node"
+
+if not exist "%NODE_DIR%\\node.exe" (
+    echo ERROR: .node 폴더가 없습니다.
+    pause
+    exit /b 1
+)
+
+set "PATH=%NODE_DIR%;%PATH%"
+
+cd /d "%ROOT_DIR%"
+${PM2} status
+pause
+`;
+
+  const clearBat = `@echo off
+chcp 65001 >nul
+setlocal
+
+set "ROOT_DIR=%~dp0"
+set "NODE_DIR=%ROOT_DIR%.node"
+
+if not exist "%NODE_DIR%\\node.exe" (
+    echo ERROR: .node 폴더가 없습니다.
+    pause
+    exit /b 1
+)
+
+set "PATH=%NODE_DIR%;%PATH%"
+
+echo SmartCube Sync Server 를 PM2 에서 삭제합니다...
+cd /d "%ROOT_DIR%"
+${PM2} delete smartcube-sync
+echo.
+${PM2} status
+echo.
+echo 삭제 완료 (이미 삭제된 상태였다면 위의 에러 메시지는 무시해도 됩니다).
+pause
+`;
+
   // migrate.bat 은 release 에 포함하지 않음 — 개발 PC 에서 npm run migrate 로 실행
 
   // Windows .bat 파일은 CRLF 필수
   const crlf = (s) => s.replace(/\r?\n/g, '\r\n');
   fs.writeFileSync(path.join(RELEASE, 'start-server.bat'), crlf(startBat));
   fs.writeFileSync(path.join(RELEASE, 'stop-server.bat'), crlf(stopBat));
+  fs.writeFileSync(path.join(RELEASE, 'status-server.bat'), crlf(statusBat));
+  fs.writeFileSync(path.join(RELEASE, 'clear-server.bat'), crlf(clearBat));
   // migrate.bat 은 release 에 포함하지 않음 — 개발 PC 에서 npm run migrate 로 실행
 }
 
