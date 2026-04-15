@@ -42,7 +42,49 @@ export class AccessCodeController {
   @ApiResponse({
     status: 200,
     description:
-      '`{ status: "ok" }` 정상 / `{ status: "partial", error }` DB 성공 + STG 실패 / `{ status: "error", message }` 중복 또는 PTI 미발견',
+      'status 로 3가지 분기. ok = 성공, partial = DB 반영 후 STG 푸시 실패, error = 중복/PTI 미발견 등 업무 에러',
+    schema: {
+      oneOf: [
+        {
+          title: 'ok',
+          type: 'object',
+          required: ['status'],
+          properties: {
+            status: { type: 'string', enum: ['ok'] },
+          },
+          example: { status: 'ok' },
+        },
+        {
+          title: 'partial',
+          type: 'object',
+          required: ['status', 'message', 'error'],
+          properties: {
+            status: { type: 'string', enum: ['partial'] },
+            message: {
+              type: 'string',
+              example: 'DB updated but STG sync failed',
+            },
+            error: {
+              type: 'string',
+              description: 'STG API 실패 메시지 원문',
+            },
+          },
+        },
+        {
+          title: 'error',
+          type: 'object',
+          required: ['status', 'message'],
+          properties: {
+            status: { type: 'string', enum: ['error'] },
+            message: {
+              type: 'string',
+              example:
+                'AccessCode 123456 is already in use in office 0002',
+            },
+          },
+        },
+      ],
+    },
   })
   async updateAccessCode(@Body() dto: UpdateAccessCodeDto) {
     const { stgUserId, officeCode, accessCode } = dto;
