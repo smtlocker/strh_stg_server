@@ -45,6 +45,9 @@ docs/
 .sessions.json
 .sessions.json.tmp
 
+# 개발자 로컬 전용 — 원격 DB → 로컬 Docker MSSQL 복제 도구
+migrations/replicate-db.js
+
 # e2e (Playwright 테스트, 로컬 전용)
 e2e/
 
