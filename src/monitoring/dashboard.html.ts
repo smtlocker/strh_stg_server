@@ -1119,7 +1119,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
 
     logFetching = true;
     try {
-      var res = await ngrokFetch('/monitoring/api/logs?' + params.toString());
+      var res = await apiFetch('/monitoring/api/logs?' + params.toString());
       var data = await res.json();
       recentLogs = data.items || [];
       currentLogTotal = data.total || 0;
@@ -1461,7 +1461,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     _reprocessingIds[id] = true;
     renderRecentLogs(false);
     try {
-      var res = await ngrokFetch('/monitoring/api/errors/' + id + '/reprocess', {
+      var res = await apiFetch('/monitoring/api/errors/' + id + '/reprocess', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -1582,7 +1582,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     updateUnitViewModeButtons();
 
     var endpoint = _unitViewMode === 'db' ? '/monitoring/api/db-units' : '/monitoring/api/stg-units';
-    ngrokFetch(endpoint + '?officeCode=' + officeCode)
+    apiFetch(endpoint + '?officeCode=' + officeCode)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         _stgData = data;
@@ -1807,7 +1807,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     bar.style.background = 'var(--blue)';
     log.innerHTML = '';
 
-    ngrokFetch('/monitoring/api/site-sync', {
+    apiFetch('/monitoring/api/site-sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(getSyncBody())
@@ -1820,7 +1820,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       _siteSyncJobId = data.jobId;
       label.textContent = '동기화 시작됨...';
 
-      ngrokFetch('/monitoring/api/site-sync/stream?jobId=' + data.jobId).then(function(response) {
+      apiFetch('/monitoring/api/site-sync/stream?jobId=' + data.jobId).then(function(response) {
         var reader = response.body.getReader();
         var decoder = new TextDecoder();
         var buf = '';
@@ -1888,7 +1888,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   window.stopSiteSync = function() {
     if (!_siteSyncJobId) return;
     document.getElementById('siteSyncLabel').textContent = '중지 요청 중...';
-    ngrokFetch('/monitoring/api/site-sync/stop', {
+    apiFetch('/monitoring/api/site-sync/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jobId: _siteSyncJobId })
@@ -1946,7 +1946,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     document.getElementById('userSyncBar').style.width = '0%';
     document.getElementById('userSyncLog').innerHTML = '';
 
-    ngrokFetch('/monitoring/api/user-sync', {
+    apiFetch('/monitoring/api/user-sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}'
@@ -1960,7 +1960,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       _userSyncJobId = data.jobId;
       document.getElementById('userSyncLabel').textContent = '동기화 진행 중...';
 
-      ngrokFetch('/monitoring/api/user-sync/stream?jobId=' + data.jobId).then(function(response) {
+      apiFetch('/monitoring/api/user-sync/stream?jobId=' + data.jobId).then(function(response) {
         var reader = response.body.getReader();
         var decoder = new TextDecoder();
         var buffer = '';
@@ -2026,7 +2026,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   window.stopUserSync = function() {
     if (!_userSyncJobId) return;
     document.getElementById('userSyncLabel').textContent = '중지 요청 중...';
-    ngrokFetch('/monitoring/api/user-sync/stop', {
+    apiFetch('/monitoring/api/user-sync/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jobId: _userSyncJobId })
@@ -2056,17 +2056,17 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     }
   }
 
-  // ── ngrok header helper ──
-  var ngrokHeaders = { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' };
+  // ── API fetch helper (ngrok-skip-browser-warning 헤더는 ngrok 터널링 환경 대응용 잔재, 비-ngrok 에서는 무시됨) ──
+  var defaultHeaders = { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' };
   var authRedirectInProgress = false;
   function redirectToMonitoringLogin() {
     if (authRedirectInProgress) return;
     authRedirectInProgress = true;
     window.location.href = '/login';
   }
-  function ngrokFetch(url, opts) {
+  function apiFetch(url, opts) {
     var o = opts || {};
-    o.headers = Object.assign({}, ngrokHeaders, o.headers || {});
+    o.headers = Object.assign({}, defaultHeaders, o.headers || {});
     return fetch(url, o).then(function(res) {
       if (res.status === 401) {
         redirectToMonitoringLogin();
@@ -2074,7 +2074,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       }
       var ct = res.headers.get('content-type') || '';
       if (!res.ok || ct.indexOf('text/html') !== -1) {
-        return Promise.reject(new Error('ngrok interstitial or error: ' + res.status));
+        return Promise.reject(new Error('API error: ' + res.status));
       }
       return res;
     });
@@ -2084,9 +2084,9 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   async function init() {
     try {
       var [sRes, lRes, pRes] = await Promise.all([
-        ngrokFetch('/monitoring/api/stats'),
-        ngrokFetch('/monitoring/api/logs?limit=' + pageSize + '&offset=0&sources=' + currentSources.join(',')),
-        ngrokFetch('/monitoring/api/pending')
+        apiFetch('/monitoring/api/stats'),
+        apiFetch('/monitoring/api/logs?limit=' + pageSize + '&offset=0&sources=' + currentSources.join(',')),
+        apiFetch('/monitoring/api/pending')
       ]);
       stats = await sRes.json();
       var logData = await lRes.json();
@@ -2108,13 +2108,13 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   init();
   loadGroups();
 
-  // ── SSE (fetch-based for ngrok header support) ──
+  // ── SSE (fetch-based) ──
   function connectSSE() {
     var badge = document.getElementById('connBadge');
     var txt = document.getElementById('connText');
     var ctrl = new AbortController();
 
-    ngrokFetch('/monitoring/api/stream').then(function(response) {
+    apiFetch('/monitoring/api/stream').then(function(response) {
       if (!response.ok || !response.body) {
         throw new Error('SSE connect failed: ' + response.status);
       }
@@ -2179,7 +2179,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   // ── Pending refresh (every 60s) ──
   setInterval(async function() {
     try {
-      var pRes = await ngrokFetch('/monitoring/api/pending');
+      var pRes = await apiFetch('/monitoring/api/pending');
       pendingData = await pRes.json();
       renderPending();
     } catch(e) {}
@@ -2188,7 +2188,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   // ── Test Email ──
   async function loadTestEmailConfig() {
     try {
-      var res = await ngrokFetch('/monitoring/api/test-email/config');
+      var res = await apiFetch('/monitoring/api/test-email/config');
       var cfg = await res.json();
       var host = document.getElementById('testEmailHost');
       var port = document.getElementById('testEmailPort');
@@ -2233,7 +2233,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     result.textContent = '';
 
     try {
-      var res = await ngrokFetch('/monitoring/api/test-email', {
+      var res = await apiFetch('/monitoring/api/test-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: to, subject: subject, body: body }),
