@@ -130,13 +130,16 @@ async function main() {
           { areaCode, showBoxNo: parsed.showBoxNo },
         );
         const row = boxResult.recordset[0];
-        if (row && row.useState === 1 && row.userCode) {
+        // 점거중 기준: useState IN (1,3) — 1=정상 입주, 3=차단(강제퇴실/연체)
+        // useState=3 도 사용자가 배정된 상태이므로 STG 공실과 무관하게 DB 보존.
+        if (row && (row.useState === 1 || row.useState === 3) && row.userCode) {
           skippedRows.push({
             site: site.name, areaCode, showBoxNo: parsed.showBoxNo,
-            unitName, stgState, dbUserCode: row.userCode, dbUserName: row.userName,
+            unitName, stgState, dbUseState: row.useState,
+            dbUserCode: row.userCode, dbUserName: row.userName,
           });
           stats.skipped++;
-          console.log(`  [SKIP] ${unitName} (${areaCode}:${parsed.showBoxNo}) — DB 입주중 but STG ${stgState}`);
+          console.log(`  [SKIP] ${unitName} (${areaCode}:${parsed.showBoxNo}) — DB 입주/차단중 (useState=${row.useState}) but STG ${stgState}`);
           return;
         }
       }
@@ -182,7 +185,7 @@ async function main() {
   if (skippedRows.length > 0) {
     console.log(`\n[SKIPPED] DB에만 입주 데이터 있는 유닛: ${skippedRows.length}건`);
     skippedRows.forEach(r => {
-      console.log(`  [SKIP:DB_ONLY_OCCUPIED] ${r.site}|${r.areaCode}|${r.showBoxNo}|${r.unitName}|${r.stgState}|${r.dbUserCode}|${r.dbUserName}`);
+      console.log(`  [SKIP:DB_ONLY_OCCUPIED] ${r.site}|${r.areaCode}|${r.showBoxNo}|${r.unitName}|${r.stgState}|useState=${r.dbUseState}|${r.dbUserCode}|${r.dbUserName}`);
     });
   }
 
