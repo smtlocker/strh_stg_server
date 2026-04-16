@@ -458,6 +458,53 @@ export class SyncLogService {
     return result.recordset;
   }
 
+  /**
+   * 단일 유닛의 post-sync DB 상태 조회 — SSE `unit-success` 이벤트에 실려
+   * 클라이언트가 그리드 카드를 즉시 갱신하는 데 사용.
+   */
+  async queryUnitStateForGrid(
+    areaCode: string,
+    showBoxNo: number,
+  ): Promise<{
+    useState: number;
+    isOverlocked: number;
+    userName: string;
+    userPhone: string;
+    isNonRevenue: number;
+  } | null> {
+    const result = await this.db.query<{
+      useState: number;
+      isOverlocked: number;
+      userName: string;
+      userPhone: string;
+      isNonRevenue: number;
+    }>(
+      `SELECT ISNULL(bm.useState, 0) AS useState,
+              ISNULL(bm.isOverlocked, 0) AS isOverlocked,
+              ISNULL(bm.userName, '') AS userName,
+              ISNULL(bm.userPhone, '') AS userPhone,
+              CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM tblSiteUserInfo su
+                  WHERE su.UserType = 'X'
+                    AND ((bm.userCode <> '' AND su.UserId = bm.userCode)
+                      OR (bm.userPhone <> '' AND su.UserPhone = bm.userPhone))
+                ) THEN 1
+                WHEN EXISTS (
+                  SELECT 1 FROM tblPTIUserInfo pti
+                  WHERE pti.AreaCode = bm.areaCode
+                    AND pti.showBoxNo = bm.showBoxNo
+                    AND pti.UserType = 'X'
+                ) THEN 1
+                ELSE 0
+              END AS isNonRevenue
+       FROM tblBoxMaster bm
+       WHERE bm.areaCode = @areaCode AND bm.showBoxNo = @showBoxNo`,
+      { areaCode, showBoxNo },
+    );
+    return result.recordset[0] ?? null;
+  }
+
   /** 특정 지점+그룹의 유닛 목록 조회 */
   async getUnitsByGroup(
     officeCode: string,

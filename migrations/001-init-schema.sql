@@ -241,29 +241,45 @@ GO
 --    호호락 레거시 코드(100~139) 는 보존하고, 신규 INSERT 부터는 출처/액션이
 --    분리된 STG 전용 코드를 사용한다. 멱등 — 누락된 row 만 INSERT.
 -- ────────────────────────────────────────────────────────────
-INSERT INTO tblEventTypeDesc (eventType, eventDesc, SourceCodeName)
-SELECT v.eventType, v.eventDesc, v.SourceCodeName
-FROM (VALUES
-  (140, N'입주 완료',                          'LOCK_STRH_STG_MOVEIN'),
-  (141, N'퇴거 예약 (endTime 설정)',           'LOCK_STRH_STG_MOVEOUT_RESERVE'),
-  (142, N'퇴거 완료',                          'LOCK_STRH_STG_MOVEOUT_COMPLETE'),
-  (143, N'퇴거 취소 (복원)',                   'LOCK_STRH_STG_MOVEOUT_CANCEL'),
-  (144, N'유닛 이전 - 기존유닛 반납',          'LOCK_STRH_STG_TRANSFER_OUT'),
-  (145, N'유닛 이전 - 신규유닛 배정',          'LOCK_STRH_STG_TRANSFER_IN'),
-  (146, N'자동 오버락 (연체)',                 'LOCK_STRH_STG_AUTO_OVERLOCK'),
-  (147, N'자동 오버락 해제',                   'LOCK_STRH_STG_AUTO_UNLOCK'),
-  (148, N'수동 오버락 (체크박스)',             'LOCK_STRH_STG_MANUAL_OVERLOCK'),
-  (149, N'수동 오버락 해제 (체크박스)',        'LOCK_STRH_STG_MANUAL_UNLOCK'),
-  (150, N'PIN 자동 재생성',                    'LOCK_STRH_STG_PIN_AUTO'),
-  (151, N'PIN 수동 변경 (매니저 API)',         'LOCK_STRH_STG_PIN_MANUAL'),
-  (152, N'sync - 입주 정보 갱신',              'LOCK_STRH_STG_SYNC_OCCUPIED'),
-  (153, N'sync - 공실 초기화',                 'LOCK_STRH_STG_SYNC_EMPTY'),
-  (154, N'스케줄러 자동 입주 활성',            'LOCK_STRH_STG_SCHED_ACTIVATE'),
-  (155, N'스케줄러 자동 퇴거 차단',            'LOCK_STRH_STG_SCHED_BLOCK'),
-  (156, N'사용자 정보 변경',                   'LOCK_STRH_STG_USER_UPDATE')
-) AS v(eventType, eventDesc, SourceCodeName)
-WHERE NOT EXISTS (
-  SELECT 1 FROM tblEventTypeDesc t WHERE t.eventType = v.eventType
+-- 140~156 의 desc/SourceCodeName 정의 (fresh + 기존 row 모두 같은 값으로 정렬)
+DECLARE @stgEvents TABLE (
+  eventType TINYINT PRIMARY KEY,
+  eventDesc NVARCHAR(150),
+  SourceCodeName VARCHAR(100)
 );
-PRINT 'tblEventTypeDesc 140~156 등록 완료 (이미 존재한 row 는 스킵)';
+INSERT INTO @stgEvents VALUES
+  (140, N'STG 연동 입주 완료',                       'LOCK_STRH_STG_MOVEIN'),
+  (141, N'STG 연동 퇴거 예약 (endTime 설정)',        'LOCK_STRH_STG_MOVEOUT_RESERVE'),
+  (142, N'STG 연동 퇴거 완료',                       'LOCK_STRH_STG_MOVEOUT_COMPLETE'),
+  (143, N'STG 연동 퇴거 취소 (복원)',                'LOCK_STRH_STG_MOVEOUT_CANCEL'),
+  (144, N'STG 연동 유닛 이전 - 기존유닛 반납',       'LOCK_STRH_STG_TRANSFER_OUT'),
+  (145, N'STG 연동 유닛 이전 - 신규유닛 배정',       'LOCK_STRH_STG_TRANSFER_IN'),
+  (146, N'STG 연동 자동 오버락 (연체)',              'LOCK_STRH_STG_AUTO_OVERLOCK'),
+  (147, N'STG 연동 자동 오버락 해제',                'LOCK_STRH_STG_AUTO_UNLOCK'),
+  (148, N'STG 연동 수동 오버락 (체크박스)',          'LOCK_STRH_STG_MANUAL_OVERLOCK'),
+  (149, N'STG 연동 수동 오버락 해제 (체크박스)',     'LOCK_STRH_STG_MANUAL_UNLOCK'),
+  (150, N'STG 연동 PIN 자동 재생성',                 'LOCK_STRH_STG_PIN_AUTO'),
+  (151, N'STG 연동 PIN 수동 변경 (매니저 API)',      'LOCK_STRH_STG_PIN_MANUAL'),
+  (152, N'STG 연동 sync - 입주 정보 갱신',           'LOCK_STRH_STG_SYNC_OCCUPIED'),
+  (153, N'STG 연동 sync - 공실 초기화',              'LOCK_STRH_STG_SYNC_EMPTY'),
+  (154, N'STG 연동 스케줄러 자동 입주 활성',         'LOCK_STRH_STG_SCHED_ACTIVATE'),
+  (155, N'STG 연동 스케줄러 자동 퇴거 차단',         'LOCK_STRH_STG_SCHED_BLOCK'),
+  (156, N'STG 연동 사용자 정보 변경',                'LOCK_STRH_STG_USER_UPDATE');
+
+-- 신규 row INSERT
+INSERT INTO tblEventTypeDesc (eventType, eventDesc, SourceCodeName)
+SELECT s.eventType, s.eventDesc, s.SourceCodeName
+FROM @stgEvents s
+WHERE NOT EXISTS (
+  SELECT 1 FROM tblEventTypeDesc t WHERE t.eventType = s.eventType
+);
+
+-- 기존 row 의 desc/SourceCodeName 가 다르면 갱신 (멱등 + 마이그레이션 재실행 안전)
+UPDATE t
+SET t.eventDesc = s.eventDesc, t.SourceCodeName = s.SourceCodeName
+FROM tblEventTypeDesc t
+JOIN @stgEvents s ON s.eventType = t.eventType
+WHERE t.eventDesc <> s.eventDesc OR t.SourceCodeName <> s.SourceCodeName;
+
+PRINT 'tblEventTypeDesc 140~156 동기화 완료';
 GO

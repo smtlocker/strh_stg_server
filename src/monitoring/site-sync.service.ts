@@ -31,6 +31,15 @@ export interface SiteSyncEvent {
   changed?: boolean;
   /** unit-success 지만 smartcube_id 가 없는 등 이유로 실제 sync 를 건너뛴 경우 */
   skipped?: boolean;
+  /** unit-success 후 DB 기준 유닛 상태 (클라이언트가 그리드 카드 실시간 업데이트용) */
+  areaCode?: string;
+  showBoxNo?: number;
+  groupCode?: string;
+  postState?: 'occupied' | 'blocked' | 'available';
+  postOverlocked?: boolean;
+  postNonRevenue?: boolean;
+  postUserName?: string;
+  postUserPhone?: string;
 }
 
 interface SiteSyncJob {
@@ -470,6 +479,30 @@ export class SiteSyncService {
         // result === null 이면 smartcube_id 미매핑 등으로 syncUnit 이 조기 return.
         // 이 경우 "변경 없음" 이 아니라 "건너뜀" 으로 구분해 운영자 오해 방지.
         const isSkipped = result === null;
+
+        // 그리드 실시간 업데이트용 post-sync 상태 조회.
+        // 스킵된 유닛 (smartcube_id 미매핑 / STG blocked) 은 DB 가 변경되지 않았으므로 생략.
+        let post: Awaited<ReturnType<typeof this.syncLog.queryUnitStateForGrid>> =
+          null;
+        if (!isSkipped && unitAreaCode !== null && unitShowBoxNo !== null) {
+          try {
+            post = await this.syncLog.queryUnitStateForGrid(
+              unitAreaCode,
+              unitShowBoxNo,
+            );
+          } catch {
+            // post-state 조회 실패해도 sync 성공 자체는 유지 — 그리드만 다음 refresh 때 반영
+          }
+        }
+        const postState: 'occupied' | 'blocked' | 'available' | undefined =
+          post
+            ? post.useState === 1
+              ? 'occupied'
+              : post.useState === 3
+                ? 'blocked'
+                : 'available'
+            : undefined;
+
         job.subject.next({
           type: 'unit-success',
           jobId: job.id,
@@ -481,6 +514,14 @@ export class SiteSyncService {
           maxAttempts: maxRetries,
           changed: isSkipped ? false : (result?.changed ?? false),
           skipped: isSkipped,
+          areaCode: unitAreaCode ?? undefined,
+          showBoxNo: unitShowBoxNo ?? undefined,
+          groupCode: parsed?.groupCode,
+          postState,
+          postOverlocked: post ? post.isOverlocked === 1 : undefined,
+          postNonRevenue: post ? post.isNonRevenue === 1 : undefined,
+          postUserName: post?.userName,
+          postUserPhone: post?.userPhone,
         });
 
         void this.syncLog.add({

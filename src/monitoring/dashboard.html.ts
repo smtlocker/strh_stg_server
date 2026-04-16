@@ -32,6 +32,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     --red: #f87171; --red-glow: rgba(248,113,113,0.15);
     --amber: #fbbf24; --amber-glow: rgba(251,191,36,0.12);
     --purple: #a78bfa;
+    --accent: #4b5fc7;
     --gradient-blue: linear-gradient(135deg, #6c8cff 0%, #818cf8 100%);
     --gradient-green: linear-gradient(135deg, #34d399 0%, #22c55e 100%);
     --gradient-red: linear-gradient(135deg, #f87171 0%, #fb923c 100%);
@@ -346,7 +347,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   .feed-search-note.visible { display: flex; }
   .feed-search-note button {
     height: 28px; padding: 0 12px; border: none; border-radius: 8px;
-    background: var(--blue); color: #fff; font-size: 11px; font-weight: 700; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; cursor: pointer;
   }
   .feed-filter-item:hover { background: var(--surface2); color: var(--text); }
   .feed-filter-item input { width: 14px; height: 14px; }
@@ -472,6 +473,9 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <option value="006">고양점</option>
           <option value="007">금호점</option>
           <option value="008">목동점</option>
+          <option value="009">송파점</option>
+          <option value="010">서울숲 비즈허브</option>
+          <option value="011">영등포점</option>
         </select>
         <select class="feed-select" id="statusSelect" onchange="setStatusFilter(this.value)">
           <option value="all">상태: 전체</option>
@@ -508,7 +512,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <label class="feed-filter-item"><input type="checkbox" class="search-field-cb" value="userName" onchange="applySearchFieldSelection()" checked> 사용자 이름</label>
         </div>
       </div>
-      <button class="control-btn" id="logSearchBtn" onclick="applyLogSearch()" style="background:#4b5fc7">검색</button>
+      <button class="control-btn" id="logSearchBtn" onclick="applyLogSearch()" style="background:var(--accent)">검색</button>
     </div>
     <table>
       <thead><tr><th style="width:70px">작업 ID</th><th style="width:160px">시각</th><th style="width:60px;white-space:nowrap">소스</th><th>이벤트</th><th>사용자</th><th>유닛</th><th style="width:50px;white-space:nowrap">상태</th><th style="width:80px;white-space:nowrap">처리시간</th></tr></thead>
@@ -535,6 +539,9 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <option value="006">고양점</option>
           <option value="007">금호점</option>
           <option value="008">목동점</option>
+          <option value="009">송파점</option>
+          <option value="010">서울숲 비즈허브</option>
+          <option value="011">영등포점</option>
         </select>
         <select class="feed-select" id="schedSelect" onchange="switchSchedTab(this.value)">
           <option value="tabSchedAll">전체</option>
@@ -564,15 +571,15 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   <div class="panel" style="margin-top:12px">
     <div class="panel-hd">
       <div style="display:flex;align-items:center;gap:0">
-        <button id="syncTabSite" class="control-btn" onclick="switchSyncTab('site')" style="background:var(--blue);border-radius:6px 0 0 6px;font-size:12px;padding:6px 16px">지점 동기화</button>
+        <button id="syncTabSite" class="control-btn" onclick="switchSyncTab('site')" style="background:var(--accent);border-radius:6px 0 0 6px;font-size:12px;padding:6px 16px">지점 동기화</button>
         <button id="syncTabUser" class="control-btn" onclick="switchSyncTab('user')" style="background:var(--surface3);color:var(--text3);border-radius:0 6px 6px 0;font-size:12px;padding:6px 16px">사용자 동기화</button>
       </div>
       <div id="siteSyncActions" style="display:flex;gap:8px;align-items:center">
-        <button id="siteSyncBtn" class="control-btn" onclick="startSiteSync()" style="background:#4b5fc7">동기화 시작</button>
+        <button id="siteSyncBtn" class="control-btn" onclick="startSiteSync()" style="background:var(--accent)">동기화 시작</button>
         <button id="siteSyncStopBtn" class="control-btn" onclick="stopSiteSync()" style="background:var(--red);display:none">중지</button>
       </div>
       <div id="userSyncActions" style="display:none;gap:8px;align-items:center">
-        <button id="userSyncBtn" class="control-btn" onclick="startUserSync()" style="background:#4b5fc7">동기화 시작</button>
+        <button id="userSyncBtn" class="control-btn" onclick="startUserSync()" style="background:var(--accent)">동기화 시작</button>
         <button id="userSyncStopBtn" class="control-btn" onclick="stopUserSync()" style="background:var(--red);display:none">중지</button>
       </div>
     </div>
@@ -589,6 +596,9 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
               <option value="006">고양점</option>
               <option value="007">금호점</option>
               <option value="008">목동점</option>
+              <option value="009">송파점</option>
+              <option value="010">서울숲 비즈허브</option>
+              <option value="011">영등포점</option>
             </select>
           </div>
           <div id="groupTabs" style="display:flex;align-items:center;overflow-x:auto;padding:8px 16px;gap:4px;flex:1;min-height:48px"></div>
@@ -602,7 +612,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);font-weight:500">
             상태 기준:
             <div style="display:flex;border:1px solid var(--border);border-radius:4px;overflow:hidden">
-              <button id="unitViewModeDb" type="button" onclick="setUnitViewMode('db')" style="padding:3px 10px;border:0;background:var(--blue);color:#fff;cursor:pointer;font-size:11px">호호락</button>
+              <button id="unitViewModeDb" type="button" onclick="setUnitViewMode('db')" style="padding:3px 10px;border:0;background:var(--accent);color:#fff;cursor:pointer;font-size:11px">호호락</button>
               <button id="unitViewModeStg" type="button" onclick="setUnitViewMode('stg')" style="padding:3px 10px;border:0;background:var(--surface3);color:var(--text3);cursor:pointer;font-size:11px">STG</button>
             </div>
           </span>
@@ -687,7 +697,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
             <textarea id="testEmailBody" rows="4" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;resize:vertical;font-family:inherit">SmartCube 알림 메일 전송이 정상 동작하는지 확인하는 테스트 메일입니다.</textarea>
           </label>
           <div style="display:flex;gap:8px;align-items:center">
-            <button id="testEmailBtn" class="control-btn" onclick="sendTestEmail()" style="background:var(--blue)">전송</button>
+            <button id="testEmailBtn" class="control-btn" onclick="sendTestEmail()" style="background:var(--accent)">전송</button>
             <span id="testEmailResult" style="font-size:11px"></span>
           </div>
         </div>
@@ -941,7 +951,8 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   var OFFICES = {
     '001': '논현점', '002': '마곡점', '003': '선릉역점',
     '004': 'WB 논현', '005': 'WB 선릉역',
-    '006': '고양점', '007': '금호점', '008': '목동점'
+    '006': '고양점', '007': '금호점', '008': '목동점',
+    '009': '송파점', '010': '서울숲 비즈허브', '011': '영등포점'
   };
 
   // showBoxNo는 STG unit.name과 동일한 표시 번호이므로 계산 없이 그대로 사용.
@@ -1552,12 +1563,12 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     var btnDb = document.getElementById('unitViewModeDb');
     if (!btnStg || !btnDb) return;
     if (_unitViewMode === 'stg') {
-      btnStg.style.background = 'var(--blue)';
+      btnStg.style.background = 'var(--accent)';
       btnStg.style.color = '#fff';
       btnDb.style.background = 'var(--surface3)';
       btnDb.style.color = 'var(--text3)';
     } else {
-      btnDb.style.background = 'var(--blue)';
+      btnDb.style.background = 'var(--accent)';
       btnDb.style.color = '#fff';
       btnStg.style.background = 'var(--surface3)';
       btnStg.style.color = 'var(--text3)';
@@ -1636,6 +1647,30 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     syncActiveGroupSelectAll();
     renderUnitGrid(groupCode);
   };
+
+  // sync 진행 중 SSE unit-success 이벤트가 내려올 때마다 _stgData 의 해당 유닛을
+  // post-sync 상태로 갱신하고, 현재 탭이면 즉시 re-render. skipped 유닛은 건너뜀.
+  // 뷰 주의: postNonRevenue / postUserName / postUserPhone 는 DB 규칙 기반이라
+  //   - DB 뷰 → 그대로 반영
+  //   - STG 뷰 → nonRevenue 는 STG unit.state='blocked' 기준이므로 건드리지 않음
+  //     (STG blocked 유닛은 sync 에서 skip → ev.skipped=true 로 여기 진입 안 함)
+  function applyUnitSyncUpdate(ev) {
+    if (!_stgData || ev.skipped || !ev.groupCode || ev.showBoxNo == null) return;
+    if (!ev.postState) return;
+    var group = _stgData.groups.find(function(g) { return g.groupCode === ev.groupCode; });
+    if (!group) return;
+    var unit = group.units.find(function(u) { return u.showBoxNo === ev.showBoxNo; });
+    if (!unit) return;
+    unit.state = ev.postState;
+    unit.overlocked = !!ev.postOverlocked;
+    if (_unitViewMode === 'db') {
+      if (ev.postNonRevenue) unit.nonRevenue = true;
+      else delete unit.nonRevenue;
+      unit.userName = ev.postUserName || '';
+      unit.userPhone = ev.postUserPhone || '';
+    }
+    if (_activeGroupCode === ev.groupCode) renderUnitGrid(_activeGroupCode);
+  }
 
   window.toggleGroupUnits = function(groupCode, checked) {
     if (!_stgData) return;
@@ -1861,6 +1896,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
                     else if (ev.changed) statusTag = ' <span style="color:var(--amber)">· 변경됨</span>';
                     else statusTag = ' <span style="color:var(--text3)">· 변경 없음</span>';
                     log.innerHTML += '<div style="color:var(--green)">[OK] ' + esc(ev.unitName) + retryTag + statusTag + '</div>';
+                    applyUnitSyncUpdate(ev);
                   } else if (ev.type === 'unit-error') {
                     var retryTag2 = ev.attempt > 1 ? ' [' + ev.attempt + '/' + ev.maxAttempts + ']' : '';
                     log.innerHTML += '<div style="color:var(--red)">[FAIL] ' + esc(ev.unitName) + retryTag2 + ': ' + esc(ev.error) + '</div>';
@@ -1914,7 +1950,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     var siteActions = document.getElementById('siteSyncActions');
     var userActions = document.getElementById('userSyncActions');
     if (tab === 'site') {
-      siteTab.style.background = 'var(--blue)'; siteTab.style.color = '';
+      siteTab.style.background = 'var(--accent)'; siteTab.style.color = '';
       userTab.style.background = 'var(--surface3)'; userTab.style.color = 'var(--text3)';
       siteContent.style.display = ''; userContent.style.display = 'none';
       siteActions.style.display = 'flex'; userActions.style.display = 'none';
