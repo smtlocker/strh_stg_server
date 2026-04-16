@@ -271,10 +271,12 @@ export class ScheduledJobWorkerService {
   private async executeMoveInActivate(
     job: ScheduledJobRow,
   ): Promise<JobExecutionResult> {
-    if (!job.userPhone) {
+    // 사용자 식별자: STG userId (=userCode) 또는 phone 중 하나라도 있으면 진행한다.
+    // STG 사용자가 phone 미등록인 케이스도 정상 활성화돼야 하므로 phone 단독 가드는 둘 수 없다.
+    if (!job.userPhone && !job.userCode) {
       return {
         kind: 'skipped',
-        reason: 'userPhone missing — unit no longer assigned',
+        reason: 'no user identity (userPhone/userCode) — unit no longer assigned',
       };
     }
 
@@ -287,10 +289,12 @@ export class ScheduledJobWorkerService {
         useState: number;
         isOverlocked: number;
         userPhone: string;
+        userCode: string;
       }>(`
           SELECT useState,
                  ISNULL(isOverlocked, 0) AS isOverlocked,
-                 ISNULL(userPhone, '') AS userPhone
+                 ISNULL(userPhone, '') AS userPhone,
+                 ISNULL(userCode, '') AS userCode
           FROM tblBoxMaster
           WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
         `);
@@ -307,11 +311,17 @@ export class ScheduledJobWorkerService {
           reason: `useState is ${row.useState}, no longer blocked`,
         };
       }
-      if (row.userPhone !== job.userPhone) {
+      // 사용자 동일성 비교: STG userId 양쪽에 있으면 그것을 우선 키로 사용하고
+      // 없으면 phone 으로 fallback. phone 만 빈 값이고 stgUserId 가 일치하면
+      // 같은 사용자로 간주한다.
+      const idChanged = job.userCode && row.userCode
+        ? job.userCode !== row.userCode
+        : row.userPhone !== job.userPhone;
+      if (idChanged) {
         await transaction.rollback();
         return {
           kind: 'skipped',
-          reason: 'userPhone changed since job creation',
+          reason: 'user identity changed since job creation',
         };
       }
 
@@ -340,7 +350,7 @@ export class ScheduledJobWorkerService {
       await setPtiUserEnableAllForGroup(
         transaction,
         job.areaCode,
-        job.userPhone,
+        job.userPhone ?? '',
         hasBlocker ? 0 : 1,
         job.userCode || undefined,
       );
@@ -438,8 +448,10 @@ export class ScheduledJobWorkerService {
         StgEventType.SchedBlock,
       );
 
-      // Q8: 같은 group 내 해당 사용자의 다른 활성 유닛 체크 (자기 자신 제외)
-      if (row.userPhone) {
+      // Q8: 같은 group 내 해당 사용자의 다른 활성 유닛 체크 (자기 자신 제외).
+      // STG uid 만 있고 phone 이 비어있는 사용자도 차단되어야 하므로 둘 중 하나라도
+      // 있으면 진행한다 (group 매칭 키는 setPtiUserEnableAllForGroup 내부에서 stgUserId).
+      if (row.userPhone || row.userCode) {
         const otherActiveCheck = await new sql.Request(transaction)
           .input('areaCode', sql.NVarChar, job.areaCode)
           .input('stgUserId', sql.NVarChar, row.userCode || null)

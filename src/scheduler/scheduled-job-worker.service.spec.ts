@@ -202,6 +202,7 @@ describe('ScheduledJobWorkerService', () => {
               useState: 3,
                             isOverlocked: 0,
               userPhone: '01012345678',
+              userCode: job.userCode,
             },
           ],
         }) // SELECT current state
@@ -244,6 +245,7 @@ describe('ScheduledJobWorkerService', () => {
               useState: 3,
                             isOverlocked: 0,
               userPhone: '01012345678',
+              userCode: job.userCode,
             },
           ],
         }) // SELECT current state
@@ -270,6 +272,7 @@ describe('ScheduledJobWorkerService', () => {
             useState: 1,
                         isOverlocked: 0,
             userPhone: '01012345678',
+            userCode: job.userCode,
           },
         ],
       });
@@ -279,6 +282,55 @@ describe('ScheduledJobWorkerService', () => {
       expect(mockRepo.markSkipped).toHaveBeenCalledWith(
         job.jobId,
         expect.stringContaining('no longer blocked'),
+      );
+    });
+
+    it('userPhone 비어있어도 STG uid (userCode) 만으로 정상 활성화', async () => {
+      const phoneless = makeJob({
+        eventType: ScheduledJobEventType.MoveInActivate,
+        userPhone: '',
+        userCode: 'stg-user-no-phone',
+      });
+      (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([phoneless]);
+      mockQuery
+        .mockResolvedValueOnce({
+          recordset: [
+            {
+              useState: 3,
+              isOverlocked: 0,
+              userPhone: '',
+              userCode: 'stg-user-no-phone',
+            },
+          ],
+        }) // SELECT current state
+        .mockResolvedValueOnce({ recordset: [] }) // UPDATE useState=1
+        .mockResolvedValueOnce({ recordset: [{ cnt: 0 }] }); // blocker count check
+
+      await worker.tick();
+
+      expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
+        mockTransaction,
+        phoneless.areaCode,
+        '',
+        1,
+        'stg-user-no-phone',
+      );
+      expect(mockRepo.markSuccess).toHaveBeenCalledWith(phoneless.jobId);
+    });
+
+    it('userPhone 과 userCode 모두 비어있으면 skip', async () => {
+      const noIdentity = makeJob({
+        eventType: ScheduledJobEventType.MoveInActivate,
+        userPhone: '',
+        userCode: '',
+      });
+      (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([noIdentity]);
+
+      await worker.tick();
+
+      expect(mockRepo.markSkipped).toHaveBeenCalledWith(
+        noIdentity.jobId,
+        expect.stringContaining('no user identity'),
       );
     });
   });
