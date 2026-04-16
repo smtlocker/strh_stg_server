@@ -116,7 +116,7 @@ describe('OverdueHandler', () => {
       expect(mockTransaction.commit).not.toHaveBeenCalled();
     });
 
-    it('정상 → useState=3, isOverlocked=1, PTI=0, history=136', async () => {
+    it('정상 → useState=3, isOverlocked=1, PTI=0, history=146', async () => {
       setupMocks();
       await handler.handle({
         type: 'unitRental.markOverdue',
@@ -141,7 +141,7 @@ describe('OverdueHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        136,
+        146,
       );
       expect(mockTransaction.commit).toHaveBeenCalled();
     });
@@ -198,7 +198,7 @@ describe('OverdueHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        138,
+        147,
       );
     });
 
@@ -218,7 +218,7 @@ describe('OverdueHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        138,
+        147,
       );
     });
 

@@ -222,7 +222,7 @@ describe('ScheduledJobWorkerService', () => {
         mockTransaction,
         job.areaCode,
         job.showBoxNo,
-        134,
+        154,
       );
       expect(mockTransaction.commit).toHaveBeenCalled();
       expect(mockRepo.markSuccess).toHaveBeenCalledWith(job.jobId);
@@ -319,7 +319,7 @@ describe('ScheduledJobWorkerService', () => {
         mockTransaction,
         job.areaCode,
         job.showBoxNo,
-        142,
+        155,
       );
       expect(mockRepo.markSuccess).toHaveBeenCalledWith(job.jobId);
     });

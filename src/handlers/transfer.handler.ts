@@ -19,6 +19,7 @@ import {
   safeRollback,
 } from '../common/db-utils';
 import { executeMoveOutCompletion } from '../common/move-out-core';
+import { StgEventType } from '../common/event-types';
 import * as sql from 'mssql';
 
 @Injectable()
@@ -201,7 +202,7 @@ export class TransferHandler implements WebhookHandler {
         transaction,
         newAreaCode,
         newShowBoxNo,
-        134,
+        StgEventType.TransferIn,
       );
 
       // 5-3. 기존 PTI에서 accessCode 조회 (STG 역기록용)
@@ -242,7 +243,7 @@ export class TransferHandler implements WebhookHandler {
         `[transfer.completed] Group PTI set to Enable=${ptiEnable} (inheritedOverlocked=${inheritedOverlocked})`,
       );
 
-      // 5-6. 기존유닛 full reset
+      // 5-6. 기존유닛 full reset — transfer 경로이므로 TransferOut eventType 사용
       await executeMoveOutCompletion(
         transaction,
         oldAreaCode,
@@ -251,6 +252,7 @@ export class TransferHandler implements WebhookHandler {
         this.logger,
         ownerId,
         inheritedOverlocked === 1, // wasOverlocked: 기존 유닛이 오버락이었으면 기존 그룹 Q7 복구 trigger
+        StgEventType.TransferOut,
       );
 
       await transaction.commit();

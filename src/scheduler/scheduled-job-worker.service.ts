@@ -11,6 +11,7 @@ import {
   insertBoxHistorySnapshot,
   setPtiUserEnableAllForGroup,
 } from '../common/db-utils';
+import { StgEventType } from '../common/event-types';
 import { ScheduledJobRepository } from './scheduled-job.repository';
 import {
   MAX_ATTEMPTS_DEFAULT,
@@ -353,7 +354,7 @@ export class ScheduledJobWorkerService {
         transaction,
         job.areaCode,
         job.showBoxNo,
-        134,
+        StgEventType.SchedActivate,
       );
 
       await transaction.commit();
@@ -434,7 +435,7 @@ export class ScheduledJobWorkerService {
         transaction,
         job.areaCode,
         job.showBoxNo,
-        142,
+        StgEventType.SchedBlock,
       );
 
       // Q8: 같은 group 내 해당 사용자의 다른 활성 유닛 체크 (자기 자신 제외)

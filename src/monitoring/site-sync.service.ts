@@ -51,6 +51,8 @@ export interface SiteSyncGroupUnit {
   name: string;
   state: string;
   overlocked: boolean;
+  /** STG unit.state='blocked' (운영자 수동 차단 — 비매출 사용자). STG view 에서만 true */
+  nonRevenue?: boolean;
   ownerName: string;
   /** DB 기준 view 에서만 채워짐 (호버 툴팁용) */
   userName?: string;
@@ -155,10 +157,12 @@ export class SiteSyncService {
       const canonical = canonicalizeUnitState(unit.state);
 
       // DB 모델과 표시 일치시키기:
-      // - unit.state=blocked 지만 rental 없음 → DB useState=2 (빈칸) 로 표시
+      // - unit.state=blocked 는 '차단(비매출 사용자)' 로 별도 표시 (nonRevenue=true)
+      //   기존에는 rental 없으면 빈칸으로 squash 했으나, 운영자가 STG 에서 명시적으로
+      //   차단한 유닛이라 그리드에서 구분돼야 함.
       // - rental 이 미래 시작 → DB useState=3 (차단) 로 표시
       let displayState: 'occupied' | 'blocked' | 'available' = canonical;
-      if (!rentalId && canonical === 'blocked') displayState = 'available';
+      const nonRevenue = canonical === 'blocked';
       if (rentalInfo?.futureStart) displayState = 'blocked';
 
       const overlocked =
@@ -172,6 +176,7 @@ export class SiteSyncService {
         overlocked,
         ownerName: '',
       };
+      if (nonRevenue) unitInfo.nonRevenue = true;
 
       const existing = groupMap.get(parsed.groupCode);
       if (existing) existing.push(unitInfo);
@@ -225,6 +230,9 @@ export class SiteSyncService {
         userName: row.userName || '',
         userPhone: row.userPhone || '',
       };
+      // tblUserTypeDesc 기준 UserType='X' 비매출 유닛 (운영/청소/임시/강제퇴실).
+      // tblSiteUserInfo 또는 tblPTIUserInfo 중 하나라도 X 로 매칭되면 true.
+      if (row.isNonRevenue === 1) unit.nonRevenue = true;
       const existing = groupMap.get(groupCode);
       if (existing) existing.push(unit);
       else groupMap.set(groupCode, [unit]);

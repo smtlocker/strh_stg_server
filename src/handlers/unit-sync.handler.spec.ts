@@ -117,7 +117,7 @@ describe('UnitSyncHandler', () => {
       mockTransaction,
       'strh00010001',
       1,
-      140,
+      153,
     );
     expect(deletePtiUserForUnit).toHaveBeenCalledWith(
       mockTransaction,
@@ -127,6 +127,45 @@ describe('UnitSyncHandler', () => {
       'owner1',
     );
     expect(mockTransaction.commit).toHaveBeenCalled();
+  });
+
+  it('STG unit.state=blocked 이면 syncUnit 조기 skip — DB/STG 호출 없음', async () => {
+    (resolveUnitMapping as jest.Mock).mockResolvedValue({
+      areaCode: 'strh00010001',
+      showBoxNo: 1,
+      officeCode: '0001',
+    });
+
+    const result = await handler.syncUnit({
+      id: 'unit1',
+      state: 'blocked',
+      rentalId: null,
+      customFields: { smartcube_id: '0001:1' },
+    });
+
+    expect(result).toBeNull();
+    expect(mockSgApi.getUnitRental).not.toHaveBeenCalled();
+    expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
+    expect(deletePtiUserForUnit).not.toHaveBeenCalled();
+    expect(mockTransaction.commit).not.toHaveBeenCalled();
+  });
+
+  it('STG unit.state=Blocked (대소문자) 도 동일하게 skip', async () => {
+    (resolveUnitMapping as jest.Mock).mockResolvedValue({
+      areaCode: 'strh00010001',
+      showBoxNo: 1,
+      officeCode: '0001',
+    });
+
+    const result = await handler.syncUnit({
+      id: 'unit1',
+      state: 'Blocked',
+      rentalId: null,
+      customFields: { smartcube_id: '0001:1' },
+    });
+
+    expect(result).toBeNull();
+    expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
   });
 
   it('reserved rental state with rentalId still syncs as empty', async () => {

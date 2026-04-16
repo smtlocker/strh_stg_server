@@ -24,6 +24,23 @@ node migrations/002-upsert-unit-smartcube-ids.js
 DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js
 ```
 
+### Windows PowerShell
+
+PowerShell 에서는 환경변수 주입 문법이 다릅니다.
+
+```powershell
+# 실제 적용
+$env:DRY_RUN="false"; node migrations/002-upsert-unit-smartcube-ids.js
+
+# 지점 제한과 함께
+$env:DRY_RUN="false"; node migrations/003-migrate-stg-user-ids.js --offices 0002
+
+# npm run migrate 로 전체 실행
+$env:DRY_RUN="false"; npm run migrate -- --offices 0002
+```
+
+`$env:DRY_RUN` 은 현재 PowerShell 세션에서만 유지됩니다. 새 창을 열면 다시 설정해야 합니다.
+
 ## 실행 순서
 
 | 단계 | 파일 | 설명 | 멱등 |
@@ -74,10 +91,56 @@ DRY_RUN=false node migrations/002-upsert-unit-smartcube-ids.js --offices 0002
 - `--offices` 값은 **4자리 officeCode** (`smartcube_siteCode` 와 같은 값). 쉼표 구분.
 - **002 / 003 / 005** — `lib/sites.js` 가 STG 에서 매칭 site 만 반환하므로 loop 자체가 좁아집니다.
 - **004** — `tblBoxMaster` / `tblPTIUserInfo` 쿼리 WHERE 절에 `areaCode LIKE 'strh<3자리>%'` 와
-  `OfficeCode IN (...)` 필터가 붙어 다른 지점 PTI 는 건드리지 않습니다 (DB 는 3자리 레거시 포맷).
+  `OfficeCode IN (...)` 필터가 붙어 다른 지점 PTI 는 건드리지 않습니다. (`tblBoxMaster.areaCode`
+  는 3자리 레거시, `tblPTIUserInfo.OfficeCode` 는 4자리 — 두 컬럼 자릿수가 다름.)
 - **001 (스키마 생성)** — 지점 무관. 항상 전체 실행.
 - **알 수 없는 officeCode** (예: `--offices 9999`) 를 넘기면 즉시 throw 후 중단됩니다.
 - STG 에서 `customFields.smartcube_siteCode` 가 설정된 site 가 하나도 없으면 throw.
+
+## 특정 유닛 단위 실행
+
+일부 유닛만 마이그레이션이 누락됐을 때 **003 / 004 / 005** 를 해당 유닛으로 제한해 재실행할 수 있습니다.
+`--units` 인자는 `<officeCode>:<groupCode>:<showBoxNo>` 포맷을 쉼표로 구분해 받습니다.
+
+```bash
+# 단일 유닛
+DRY_RUN=false node migrations/003-migrate-stg-user-ids.js --units 0010:0001:1075
+DRY_RUN=false node migrations/004-reconcile-pti-per-unit.js --units 0010:0001:1075
+DRY_RUN=false node migrations/005-site-sync.js --units 0010:0001:1075
+
+# 여러 유닛 (다지점 혼합 가능)
+DRY_RUN=false node migrations/005-site-sync.js \
+  --units 0010:0001:1075,0010:0001:1317,0003:0001:1504
+```
+
+### PowerShell 예시
+
+```powershell
+$env:DRY_RUN="false"; node migrations/003-migrate-stg-user-ids.js --units 0010:0001:1075
+$env:DRY_RUN="false"; node migrations/005-site-sync.js --units 0010:0001:1075,0010:0001:1317
+```
+
+### 동작
+
+- **003 / 005** — STG 유닛 loop 중 `--units` 의 (officeCode, groupCode, showBoxNo) 에 매칭되는 것만 처리. 나머지는 `stats.filtered` 로 집계.
+- **004** — 지정 유닛이 속한 **사용자 group 전체** 를 reconcile 대상으로 확장. 예: `--units 0010:0001:1002` 로 실행해도 그 사용자가 3개 유닛 소유 중이면 3개 모두 PTI 정리. 정합성 보장 목적.
+- `--offices` 는 `--units` 지정 시 역산되어 함께 쓸 필요 없습니다.
+- **001 / 002** 는 `--units` 지원 안 함 (의미 없음) — 필요하면 002 를 `--offices` 로 먼저 돌려 smartcube_id 매핑을 선행하세요.
+- `migrate-all.js` 는 `--units` 를 전달하지 않습니다. 개별 스크립트를 직접 실행하세요.
+
+### 사용 시나리오
+
+```bash
+# 특정 유닛이 sync 안 됐을 때 3/4/5 를 순차 재실행
+DRY_RUN=true node migrations/003-migrate-stg-user-ids.js --units 0010:0001:1075
+DRY_RUN=true node migrations/004-reconcile-pti-per-unit.js --units 0010:0001:1075
+DRY_RUN=true node migrations/005-site-sync.js --units 0010:0001:1075
+
+# 문제 없으면 DRY_RUN=false 로 재실행
+DRY_RUN=false node migrations/003-migrate-stg-user-ids.js --units 0010:0001:1075
+DRY_RUN=false node migrations/004-reconcile-pti-per-unit.js --units 0010:0001:1075
+DRY_RUN=false node migrations/005-site-sync.js --units 0010:0001:1075
+```
 
 ## 주의사항
 

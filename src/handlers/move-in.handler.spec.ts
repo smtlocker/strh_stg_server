@@ -181,7 +181,7 @@ describe('MoveInHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        134,
+        140,
       );
       expect(mockTransaction.commit).toHaveBeenCalled();
     });

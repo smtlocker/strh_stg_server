@@ -10,6 +10,7 @@ import {
   setPtiUserEnableAllForGroup,
   safeRollback,
 } from '../common/db-utils';
+import { StgEventType } from '../common/event-types';
 import * as sql from 'mssql';
 
 @Injectable()
@@ -86,7 +87,12 @@ export class OverdueHandler implements WebhookHandler {
       );
 
       // tblBoxHistory 스냅샷 (Q4)
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 136);
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.AutoOverlock,
+      );
 
       await transaction.commit();
       this.logger.log(
@@ -189,7 +195,12 @@ export class OverdueHandler implements WebhookHandler {
         );
       }
 
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 138);
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.AutoUnlock,
+      );
 
       await transaction.commit();
       this.logger.log(

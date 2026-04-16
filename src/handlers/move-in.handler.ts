@@ -16,6 +16,7 @@ import {
   setPtiUserEnableAllForGroup,
   safeRollback,
 } from '../common/db-utils';
+import { StgEventType } from '../common/event-types';
 import { SyncMeta } from '../monitoring/monitoring.types';
 import { ScheduledJobRepository } from '../scheduler/scheduled-job.repository';
 import { ScheduledJobEventType } from '../scheduler/scheduled-job.types';
@@ -254,9 +255,14 @@ export class MoveInHandler implements WebhookHandler {
       // (다른 활성 유닛의 Enable=1 유지, 방금 upsert 한 row 만 Enable=0)
 
       // 4-4. INSERT tblBoxHistory — 30컬럼 스냅샷 (Q4)
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 134);
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.Movein,
+      );
       this.logger.log(
-        `[moveIn.completed] tblBoxHistory snapshot inserted (eventType=134)`,
+        `[moveIn.completed] tblBoxHistory snapshot inserted (eventType=${StgEventType.Movein})`,
       );
 
       // 4-4-1. 이전 사이클의 stale 한 moveOut 관련 pending 스케줄 cleanup.

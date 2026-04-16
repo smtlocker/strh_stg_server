@@ -29,7 +29,7 @@ describe('executeMoveOutCompletion', () => {
     mockQuery.mockResolvedValue({ recordset: [], rowsAffected: [1] });
   });
 
-  it('tblBoxMaster 초기화 + history 135 + 해당 유닛 PTI 삭제', async () => {
+  it('tblBoxMaster 초기화 + history 142 + 해당 유닛 PTI 삭제', async () => {
     await executeMoveOutCompletion(
       mockTransaction,
       'strh00010001',
@@ -43,7 +43,7 @@ describe('executeMoveOutCompletion', () => {
       mockTransaction,
       'strh00010001',
       1,
-      135,
+      142,
     );
     expect(deletePtiUserForUnit).toHaveBeenCalledWith(
       mockTransaction,

@@ -597,6 +597,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#5ba8c8;vertical-align:middle"></span> 사용중</span>
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#a0a0a0;vertical-align:middle"></span> 빈칸</span>
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#e8a040;vertical-align:middle"></span> 차단</span>
+          <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#a78bfa;vertical-align:middle"></span> 차단(비매출 사용자)</span>
           <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#d34a4a;vertical-align:middle"></span> 오버락</span>
           <span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);font-weight:500">
             상태 기준:
@@ -1496,8 +1497,8 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   var _stgData = null; // cached STG response
   var _activeGroupCode = null;
 
-  var STG_STATES = { occupied: '사용중', available: '빈칸', blocked: '차단' };
-  var STG_STATE_COLORS = { occupied: 'var(--green)', available: 'var(--text3)', blocked: 'var(--amber)' };
+  var STG_STATES = { occupied: '사용중', available: '빈칸', blocked: '차단', blocked_nonrevenue: '차단(비매출 사용자)' };
+  var STG_STATE_COLORS = { occupied: 'var(--green)', available: 'var(--text3)', blocked: 'var(--amber)', blocked_nonrevenue: '#a78bfa' };
   var UNIT_TILE_STYLES = {
     occupied: {
       bg: 'rgba(74,154,181,0.26)',
@@ -1518,6 +1519,13 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       color: '#ffe7b6',
       border: 'rgba(200,138,48,0.40)',
       selectedBg: '#c88a30',
+      selectedColor: '#fff'
+    },
+    blocked_nonrevenue: {
+      bg: 'rgba(167,139,250,0.22)',
+      color: '#e7defe',
+      border: 'rgba(167,139,250,0.40)',
+      selectedBg: '#a78bfa',
       selectedColor: '#fff'
     },
     overlocked: {
@@ -1658,7 +1666,9 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     group.units.forEach(function(u) {
       var key = groupCode + ':' + u.showBoxNo;
       var selected = !!_selectedUnits[key];
-      var effectiveState = u.overlocked ? 'overlocked' : u.state;
+      var effectiveState = u.overlocked
+        ? 'overlocked'
+        : (u.nonRevenue ? 'blocked_nonrevenue' : u.state);
       var tile = UNIT_TILE_STYLES[effectiveState] || UNIT_TILE_STYLES.unknown;
       var bg = selected ? tile.selectedBg : tile.bg;
       var color = selected ? tile.selectedColor : tile.color;

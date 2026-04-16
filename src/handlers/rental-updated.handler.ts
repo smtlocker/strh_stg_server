@@ -15,6 +15,7 @@ import {
   setPtiUserEnableAllForGroup,
   safeRollback,
 } from '../common/db-utils';
+import { StgEventType } from '../common/event-types';
 import * as sql from 'mssql';
 
 @Injectable()
@@ -109,7 +110,12 @@ export class RentalUpdatedHandler implements WebhookHandler {
              WHERE OfficeCode=@officeCode AND StgUserId=@stgUserId`,
           );
 
-          await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 139);
+          await insertBoxHistorySnapshot(
+            transaction,
+            areaCode,
+            showBoxNo,
+            StgEventType.PinAuto,
+          );
 
           await transaction.commit();
           this.logger.log(
@@ -253,7 +259,7 @@ export class RentalUpdatedHandler implements WebhookHandler {
               transaction,
               areaCode,
               showBoxNo,
-              136,
+              StgEventType.ManualOverlock,
             );
             await transaction.commit();
             this.logger.log(
@@ -315,7 +321,7 @@ export class RentalUpdatedHandler implements WebhookHandler {
               transaction,
               areaCode,
               showBoxNo,
-              138,
+              StgEventType.ManualUnlock,
             );
             await transaction.commit();
             this.logger.log(

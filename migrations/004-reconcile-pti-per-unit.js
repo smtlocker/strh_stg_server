@@ -18,6 +18,12 @@
 const path = require('path');
 const sql = require('mssql');
 const { resolveSites, parseOfficesArg, toDbOfficeCode } = require('./lib/sites');
+const {
+  parseUnitsArg,
+  parseUnitsEntries,
+  buildUnitFilter,
+  officesFromEntries,
+} = require('./lib/units');
 
 try {
   require('dotenv').config({
@@ -28,10 +34,14 @@ try {
 }
 
 const DRY_RUN = (process.env.DRY_RUN ?? 'true') !== 'false';
-// --offices 로 대상 지점을 좁힐 수 있다. 미지정 시 전체 DB 스캔(기존 동작).
-// SCOPED 판단은 CLI 인자 존재 여부로만 — 지점 개수가 늘어나도 의미가 안 꼬이게.
-// 실제 TARGET_SITES 는 STG API 호출이 필요하므로 main() 안에서 초기화.
-const CLI_OFFICES_RAW = parseOfficesArg();
+// --offices / --units 로 대상 범위를 좁힐 수 있다. 미지정 시 전체 DB 스캔.
+// --units 는 해당 유닛이 속한 사용자 group 전체를 처리 대상으로 확장한다.
+// SCOPED 판단은 둘 중 하나라도 지정됐는지로. 실제 TARGET_SITES 는 STG API 호출이 필요하므로 main() 안에서 초기화.
+const CLI_UNITS_ENTRIES = parseUnitsEntries(parseUnitsArg());
+const UNIT_FILTER = buildUnitFilter(CLI_UNITS_ENTRIES);
+const CLI_OFFICES_RAW = UNIT_FILTER.enabled
+  ? officesFromEntries(CLI_UNITS_ENTRIES)
+  : parseOfficesArg();
 const SCOPED = CLI_OFFICES_RAW != null;
 
 const dbConfig = {
@@ -65,12 +75,52 @@ async function main() {
   const TARGET_SITES = await resolveSites(CLI_OFFICES_RAW);
   const TARGET_OFFICES = TARGET_SITES.map((s) => s.officeCode);
   console.log(`대상 지점: ${SCOPED ? TARGET_OFFICES.join(', ') : '전체'}`);
+  if (UNIT_FILTER.enabled) {
+    console.log(`대상 유닛: ${CLI_UNITS_ENTRIES.length}건 (--units 지정 — 사용자 group 전체로 확장)`);
+  }
 
   const pool = await sql.connect(dbConfig);
 
+  // --units 지정 시: 해당 유닛이 속한 사용자 group key 를 DB 에서 역산.
+  // 이후 reconcile 루프에서 이 key 에 속한 group 만 처리.
+  // 유닛이 DB 에 없거나 배정돼 있지 않으면 skip 로그만 출력.
+  let targetGroupKeys = null;
+  if (UNIT_FILTER.enabled) {
+    targetGroupKeys = new Set();
+    for (const entry of CLI_UNITS_ENTRIES) {
+      const code3 = toDbOfficeCode(entry.officeCode);
+      const areaCode = 'strh' + code3 + entry.groupCode;
+      const res = await pool.request()
+        .input('areaCode', sql.NVarChar, areaCode)
+        .input('showBoxNo', sql.Int, entry.showBoxNo)
+        .query(`SELECT useState, userCode, userPhone FROM tblBoxMaster
+                WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`);
+      const row = res.recordset[0];
+      if (!row) {
+        console.log(`[SKIP:NOT_FOUND] ${entry.officeCode}:${entry.groupCode}:${entry.showBoxNo} — DB에 없음`);
+        continue;
+      }
+      if ((row.useState !== 1 && row.useState !== 3) || !row.userPhone) {
+        console.log(
+          `[SKIP:NOT_ASSIGNED] ${entry.officeCode}:${entry.groupCode}:${entry.showBoxNo} ` +
+            `— useState=${row.useState} userCode=${row.userCode || '(none)'} userPhone=${row.userPhone || '(none)'}`,
+        );
+        continue;
+      }
+      const userKey = row.userCode || `phone:${row.userPhone}`;
+      targetGroupKeys.add(`${entry.officeCode}|${userKey}`);
+    }
+    console.log(`대상 사용자 group: ${targetGroupKeys.size}건`);
+    if (targetGroupKeys.size === 0) {
+      console.log('처리 대상 없음. 종료.');
+      await pool.close();
+      return;
+    }
+  }
+
   // --offices 지정 시 WHERE 절에 officeCode/areaCode 필터 주입.
-  // DB 레거시 포맷: areaCode `strh<3자리officeCode><4자리groupCode>`, OfficeCode 컬럼도 3자리.
-  // 4자리 site.officeCode 는 toDbOfficeCode() 로 마지막 3자리만 뽑아 쿼리에 전달.
+  // DB 포맷 주의: tblBoxMaster.areaCode 는 `strh<3자리officeCode><4자리groupCode>` 레거시 3자리,
+  //              tblPTIUserInfo.OfficeCode 는 4자리. 두 컬럼의 자릿수가 달라서 바인딩 값도 다름.
   const areaCodeFilter = SCOPED
     ? ` AND (${TARGET_OFFICES.map((c, i) => `areaCode LIKE @areaPrefix${i}`).join(' OR ')})`
     : '';
@@ -83,7 +133,9 @@ async function main() {
     TARGET_OFFICES.forEach((code, i) => {
       const code3 = toDbOfficeCode(code);
       req.input(`areaPrefix${i}`, sql.NVarChar, `strh${code3}%`);
-      req.input(`officeCode${i}`, sql.NVarChar, code3);
+      // tblPTIUserInfo.OfficeCode 는 4자리 포맷이므로 전체 코드를 그대로 바인딩.
+      // (tblBoxMaster.areaCode 의 3자리 레거시 포맷과 다름 — 혼동 주의)
+      req.input(`officeCode${i}`, sql.NVarChar, String(code).padStart(4, '0'));
     });
     return req;
   };
@@ -146,6 +198,8 @@ async function main() {
 
     try {
       for (const [key, group] of boxGroups.entries()) {
+        // --units 지정 시: 지정 유닛이 속한 사용자 group 만 처리
+        if (targetGroupKeys && !targetGroupKeys.has(key)) continue;
         const existing = ptiGroups.get(key) ?? [];
         existing.sort((a, b) => new Date(b.UpdateTime).getTime() - new Date(a.UpdateTime).getTime());
         const accessCode = existing[0]?.AccessCode ?? null;

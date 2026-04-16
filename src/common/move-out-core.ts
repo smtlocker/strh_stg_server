@@ -5,13 +5,15 @@ import {
   deletePtiUserForUnit,
   setPtiUserEnableAllForGroup,
 } from './db-utils';
+import { StgEventType } from './event-types';
 
 /**
  * Move Out 완료 시 DB 처리 공통 로직.
  * 웹훅 핸들러와 스케줄러 양쪽에서 동일하게 사용.
  *
  * 1. tblBoxMaster 초기화 (useState=2, 유저 정보 클리어, boxPassword='2580')
- * 2. tblBoxHistory 스냅샷 (eventType=135)
+ * 2. tblBoxHistory 스냅샷 (기본 eventType=MoveoutComplete(142))
+ *    - transfer 경로에서는 caller 가 TransferOut(144) 로 override
  * 3. 해당 유닛에 대응하는 tblPTIUserInfo 삭제
  */
 export async function executeMoveOutCompletion(
@@ -22,6 +24,7 @@ export async function executeMoveOutCompletion(
   logger: Logger,
   stgUserId?: string,
   wasOverlocked = false,
+  eventType: number = StgEventType.MoveoutComplete,
 ): Promise<void> {
   // 1. tblBoxMaster 초기화
   const req = new sql.Request(transaction);
@@ -47,9 +50,9 @@ export async function executeMoveOutCompletion(
     `tblBoxMaster reset — areaCode: ${areaCode}, showBoxNo: ${showBoxNo}`,
   );
 
-  // 2. tblBoxHistory 스냅샷
-  await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 135);
-  logger.debug(`tblBoxHistory snapshot inserted (eventType=135)`);
+  // 2. tblBoxHistory 스냅샷 (caller 가 eventType override 가능)
+  await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, eventType);
+  logger.debug(`tblBoxHistory snapshot inserted (eventType=${eventType})`);
 
   await deletePtiUserForUnit(
     transaction,

@@ -184,7 +184,7 @@ describe('MoveOutHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        140,
+        141,
       );
       expect(mockTransaction.commit).toHaveBeenCalled();
       expect(result).toEqual(
@@ -216,7 +216,7 @@ describe('MoveOutHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        140,
+        141,
       );
       expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
       expect(mockTransaction.commit).toHaveBeenCalled();
@@ -491,7 +491,7 @@ describe('MoveOutHandler', () => {
       expect(mockDbService.beginTransaction).not.toHaveBeenCalled();
     });
 
-    it('정상 흐름 (useState=1) → endTime 2099 복원 + history 141 + SyncMeta 반환', async () => {
+    it('정상 흐름 (useState=1) → endTime 2099 복원 + history 143 + SyncMeta 반환', async () => {
       mockQuery.mockResolvedValue({
         recordset: [
           {
@@ -511,7 +511,7 @@ describe('MoveOutHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        141,
+        143,
       );
       expect(mockTransaction.commit).toHaveBeenCalled();
       expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();

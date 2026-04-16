@@ -19,6 +19,7 @@ import {
   insertBoxHistorySnapshot,
   officeCodeToAreaPrefix,
 } from '../common/db-utils';
+import { StgEventType } from '../common/event-types';
 import * as sql from 'mssql';
 
 @ApiTags('access-code')
@@ -140,7 +141,7 @@ export class AccessCodeController {
           transaction,
           unit.areaCode,
           unit.showBoxNo,
-          139,
+          StgEventType.PinManual,
         );
       }
 

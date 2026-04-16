@@ -15,6 +15,7 @@ import {
   safeRollback,
 } from '../common/db-utils';
 import { executeMoveOutCompletion } from '../common/move-out-core';
+import { StgEventType } from '../common/event-types';
 import { ScheduledJobRepository } from '../scheduler/scheduled-job.repository';
 import { ScheduledJobEventType } from '../scheduler/scheduled-job.types';
 import * as sql from 'mssql';
@@ -125,7 +126,13 @@ export class MoveOutHandler implements WebhookHandler {
         .query(
           `UPDATE tblBoxMaster SET endTime = @endTime, updateTime = GETDATE() WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`,
         );
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 140);
+      // endTime 만 예약 변경 (아직 반납 전)
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.MoveoutReserve,
+      );
       this.logger.log(
         `MoveOut.created: endTime set (worker will block at ${endTime}) — areaCode=${areaCode} showBoxNo=${showBoxNo}`,
       );
@@ -444,7 +451,13 @@ export class MoveOutHandler implements WebhookHandler {
         }
       }
 
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 141);
+      // 퇴거 취소로 endTime/상태 복원
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.MoveoutCancel,
+      );
 
       // 동일 unit의 pending moveOut.block 스케줄 취소.
       // MoveInActivate는 의도적으로 제외 — moveOut 취소가 moveIn 예약까지

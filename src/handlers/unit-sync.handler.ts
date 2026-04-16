@@ -23,6 +23,7 @@ import {
   setPtiUserEnableAllForGroup,
   safeRollback,
 } from '../common/db-utils';
+import { StgEventType } from '../common/event-types';
 import { ScheduledJobRepository } from '../scheduler/scheduled-job.repository';
 import { ScheduledJobEventType } from '../scheduler/scheduled-job.types';
 import * as sql from 'mssql';
@@ -164,6 +165,19 @@ export class UnitSyncHandler implements WebhookHandler {
     if (!parsed) {
       this.logger.warn(
         `[unitSync] smartcube_id missing or invalid for unit ${unitId}`,
+      );
+      return null;
+    }
+
+    // STG 에서 unit.state='blocked' (운영자 수동 차단 — 비매출 사용자 지정) 은
+    // DB 에 사용자/게이트 데이터를 유지한 채 sync 자체를 건너뛴다. 공실 초기화(syncEmpty)
+    // 를 하지 않으므로 스토어허브 관리자/청소 계정 등이 보존된다.
+    const stgState = ((unit as { state?: string }).state ?? '')
+      .trim()
+      .toLowerCase();
+    if (stgState === 'blocked') {
+      this.logger.log(
+        `[unitSync] Skipping — unit ${unitId} STG state='blocked' (비매출 사용자 차단)`,
       );
       return null;
     }
@@ -474,8 +488,13 @@ export class UnitSyncHandler implements WebhookHandler {
         `[unitSync] Group-wide PTI Enable=${groupEnable} (hasBlocker=${hasBlocker})`,
       );
 
-      // History 스냅샷 (eventType=140: unit sync)
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 140);
+      // History 스냅샷 — sync 로 인한 입주 정보 재집계
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.SyncOccupied,
+      );
 
       // ─────────────────────────────────────────────────────────
       // tblScheduledJob reconcile — STG 를 source of truth 로 삼아
@@ -638,8 +657,13 @@ export class UnitSyncHandler implements WebhookHandler {
           WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
         `);
 
-      // History 스냅샷 (eventType=140: unit sync)
-      await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, 140);
+      // History 스냅샷 — sync 로 인한 공실 초기화
+      await insertBoxHistorySnapshot(
+        transaction,
+        areaCode,
+        showBoxNo,
+        StgEventType.SyncEmpty,
+      );
 
       if (currentUserPhone || currentStgUserId) {
         await deletePtiUserForUnit(

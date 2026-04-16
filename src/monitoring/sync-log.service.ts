@@ -415,6 +415,10 @@ export class SyncLogService {
       isOverlocked: number;
       userName: string;
       userPhone: string;
+      /** 비매출 사용자 여부 — UserTypeDesc 의 'X' 타입 (운영/청소/임시/강제퇴실 등).
+       *  tblSiteUserInfo (site 레벨 사용자 마스터) 또는 tblPTIUserInfo (유닛별 게이트 권한)
+       *  중 어느 하나라도 UserType='X' 로 매칭되면 비매출로 간주. */
+      isNonRevenue: number;
     }[]
   > {
     const result = await this.db.query<{
@@ -424,15 +428,31 @@ export class SyncLogService {
       isOverlocked: number;
       userName: string;
       userPhone: string;
+      isNonRevenue: number;
     }>(
-      `SELECT areaCode, showBoxNo,
-              ISNULL(useState, 0) AS useState,
-              ISNULL(isOverlocked, 0) AS isOverlocked,
-              ISNULL(userName, '') AS userName,
-              ISNULL(userPhone, '') AS userPhone
-       FROM tblBoxMaster
-       WHERE areaCode LIKE @prefix + '%' AND showBoxNo IS NOT NULL
-       ORDER BY areaCode, showBoxNo`,
+      `SELECT bm.areaCode, bm.showBoxNo,
+              ISNULL(bm.useState, 0) AS useState,
+              ISNULL(bm.isOverlocked, 0) AS isOverlocked,
+              ISNULL(bm.userName, '') AS userName,
+              ISNULL(bm.userPhone, '') AS userPhone,
+              CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM tblSiteUserInfo su
+                  WHERE su.UserType = 'X'
+                    AND ((bm.userCode <> '' AND su.UserId = bm.userCode)
+                      OR (bm.userPhone <> '' AND su.UserPhone = bm.userPhone))
+                ) THEN 1
+                WHEN EXISTS (
+                  SELECT 1 FROM tblPTIUserInfo pti
+                  WHERE pti.AreaCode = bm.areaCode
+                    AND pti.showBoxNo = bm.showBoxNo
+                    AND pti.UserType = 'X'
+                ) THEN 1
+                ELSE 0
+              END AS isNonRevenue
+       FROM tblBoxMaster bm
+       WHERE bm.areaCode LIKE @prefix + '%' AND bm.showBoxNo IS NOT NULL
+       ORDER BY bm.areaCode, bm.showBoxNo`,
       { prefix: areaCodePrefix },
     );
     return result.recordset;

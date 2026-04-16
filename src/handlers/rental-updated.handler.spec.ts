@@ -157,7 +157,7 @@ describe('RentalUpdatedHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        136,
+        148,
       );
       expect(mockSgApi.updateUnitRental).toHaveBeenCalledWith('r1', {
         customFields: {
@@ -212,7 +212,7 @@ describe('RentalUpdatedHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        138,
+        149,
       );
       expect(mockSgApi.updateUnitRental).toHaveBeenCalledWith('r1', {
         customFields: {
@@ -242,7 +242,7 @@ describe('RentalUpdatedHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        138,
+        149,
       );
       expect(mockSgApi.updateUnitRental).toHaveBeenCalledWith('r1', {
         customFields: {

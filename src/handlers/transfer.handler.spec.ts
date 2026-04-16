@@ -278,13 +278,14 @@ describe('TransferHandler', () => {
       expect.any(Object),
       'owner1',
       false,
+      144, // TransferOut
     );
     // 신규유닛 history
     expect(insertBoxHistorySnapshot).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010002',
       5,
-      134,
+      145,
     );
     expect(mockTransaction.commit).toHaveBeenCalled();
   });
@@ -413,6 +414,7 @@ describe('TransferHandler', () => {
       expect.any(Object),
       'owner1',
       true, // wasOverlocked: 기존 유닛이 오버락이었으므로 Q7 복구 trigger
+      144, // TransferOut
     );
     expect(mockTransaction.commit).toHaveBeenCalled();
   });

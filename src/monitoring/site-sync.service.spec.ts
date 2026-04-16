@@ -137,10 +137,11 @@ describe('SiteSyncService', () => {
               showBoxNo: 1,
               unitId: 'unit-b1',
               name: 'Unit B1',
-              // unit.state='blocked' + rental 없음 → DB 모델 기준 'available'로 노멀라이즈
-              state: 'available',
+              // unit.state='blocked' → '차단(비매출 사용자)' 로 별도 표시
+              state: 'blocked',
               overlocked: false,
               ownerName: '',
+              nonRevenue: true,
             },
             {
               showBoxNo: 2,

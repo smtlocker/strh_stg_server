@@ -52,14 +52,31 @@ async function main() {
   const db = app.get(DatabaseService);
 
   const { resolveSites, parseOfficesArg, toDbOfficeCode } = require(path.join(__dirname, 'lib', 'sites'));
-  const SITES = await resolveSites(parseOfficesArg());
+  const {
+    parseUnitsArg,
+    parseUnitsEntries,
+    buildUnitFilter,
+    officesFromEntries,
+  } = require(path.join(__dirname, 'lib', 'units'));
+
+  // --units 지정 시 해당 유닛만 sync. --offices 는 --units 의 officeCode 로 역산.
+  const unitEntries = parseUnitsEntries(parseUnitsArg());
+  const unitFilter = buildUnitFilter(unitEntries);
+  const officesArg = unitFilter.enabled
+    ? officesFromEntries(unitEntries)
+    : parseOfficesArg();
+
+  const SITES = await resolveSites(officesArg);
   console.log(
     `대상 지점: ${SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')}`,
   );
+  if (unitFilter.enabled) {
+    console.log(`대상 유닛: ${unitEntries.length}건 (--units 지정)`);
+  }
 
   const skippedRows = [];
   const failedRows = [];
-  const stats = { total: 0, synced: 0, skipped: 0, noSmartcubeId: 0, failed: 0 };
+  const stats = { total: 0, synced: 0, skipped: 0, noSmartcubeId: 0, failed: 0, filtered: 0 };
 
   for (const site of SITES) {
     console.log(`\n=== [${site.name}] officeCode=${site.officeCode} ===`);
@@ -88,6 +105,16 @@ async function main() {
       console.log(`  [SKIP:NO_SMARTCUBE_ID] ${site.name}|${unitName}|${unit.id}|${(unit.state || '')}`);
       return;
     }
+
+    // --units 지정 시 allow 목록에 없는 유닛은 스킵
+    if (unitFilter.enabled) {
+      const parsedId = parseSmartcubeId(smartcubeId);
+      if (!parsedId || !unitFilter.has(site.officeCode, parsedId.groupCode, parsedId.showBoxNo)) {
+        stats.filtered++;
+        return;
+      }
+    }
+
     const stgState = (unit.state || '').toLowerCase();
     const rentalId = unit.rentalId;
     const isOccupied = stgState === 'occupied' && !!rentalId;

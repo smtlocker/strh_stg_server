@@ -26,6 +26,12 @@ const http = require('http');
 
 const sql = require('mssql');
 const { resolveSites, parseOfficesArg, toDbOfficeCode } = require('./lib/sites');
+const {
+  parseUnitsArg,
+  parseUnitsEntries,
+  buildUnitFilter,
+  officesFromEntries,
+} = require('./lib/units');
 
 // ─── .env 로드 ───────────────────────────────────────────
 
@@ -167,11 +173,22 @@ async function main() {
   console.log('=== 003: STG User ID 매핑 (rental 기반) ===');
   console.log(`DRY_RUN=${DRY_RUN}`);
 
+  // --units 지정 시 해당 유닛만 처리. --offices 는 --units 에서 역산한 officeCode 로 덮어씀
+  // (중복 플래그 오해 방지).
+  const unitEntries = parseUnitsEntries(parseUnitsArg());
+  const unitFilter = buildUnitFilter(unitEntries);
+  const officesArg = unitFilter.enabled
+    ? officesFromEntries(unitEntries)
+    : parseOfficesArg();
+
   // STG 에서 site 목록 조회 (customFields.smartcube_siteCode 기반)
-  const SITES = await resolveSites(parseOfficesArg());
+  const SITES = await resolveSites(officesArg);
   console.log(
     `대상 지점: ${SITES.map((s) => `${s.officeCode}(${s.name})`).join(', ')}`,
   );
+  if (unitFilter.enabled) {
+    console.log(`대상 유닛: ${unitEntries.length}건 (--units 지정)`);
+  }
   console.log('');
 
   // ── 1. MSSQL 연결 ──
@@ -204,6 +221,7 @@ async function main() {
     const stats = {
       total: 0, occupied: 0, mapped: 0, noSmartcubeId: 0,
       notOccupied: 0, noOwnerId: 0, userFetchFail: 0,
+      filtered: 0,
       ptiUpdated: 0, boxUpdated: 0,
     };
 
@@ -242,6 +260,12 @@ async function main() {
         const parsed = parseSmartcubeId(smartcubeId);
         if (!parsed) {
           stats.noSmartcubeId++;
+          continue;
+        }
+
+        // --units 지정 시 allow 목록에 없는 유닛은 스킵
+        if (!unitFilter.has(site.officeCode, parsed.groupCode, parsed.showBoxNo)) {
+          stats.filtered++;
           continue;
         }
 
@@ -329,6 +353,9 @@ async function main() {
     console.log(`  smartcube_id 없음: ${stats.noSmartcubeId}`);
     console.log(`  ownerId 없음: ${stats.noOwnerId}`);
     console.log(`  조회 실패 (rental/user): ${stats.userFetchFail}`);
+    if (unitFilter.enabled) {
+      console.log(`  --units 필터로 스킵: ${stats.filtered}`);
+    }
     console.log('');
     console.log(`DB 업데이트:`);
     console.log(`  tblPTIUserInfo: ${stats.ptiUpdated}행`);
