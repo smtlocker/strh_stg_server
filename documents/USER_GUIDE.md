@@ -49,6 +49,10 @@ SMTP_PORT=465                                       # 465=SSL, 587=STARTTLS
 SMTP_USER=ejunokl                                   # SMTP 로그인 계정
 SMTP_PASS=fghldbhvvlntmofq                          # SMTP 비밀번호 또는 앱 비밀번호
 SMTP_FROM=SmartCube Alerts <ejunokl@daum.net>       # 예: SmartCube Alerts <alerts@example.com>
+
+# HTTPS (선택) — 설정 시 NestJS 가 직접 TLS 종단. 없으면 HTTP 폴백.
+SSL_KEY=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__key.pem
+SSL_CERT=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__crt.pem
 ```
 
 > `DB_*`, `SG_*`, `SMTP_*` 는 프로덕션 환경 값으로 반드시 교체하세요.
@@ -113,12 +117,12 @@ STG 는 `https://` URL 로만 webhook 을 발송합니다. 기본 구성은 Nest
 
 ### 방식 B — NestJS 자체 HTTPS + PM2 주기 재시작 (인프라 의존 최소)
 
-1. `.env` 에 인증서 경로 설정:
+1. `.env` 에 인증서 경로 설정 (현재 운영: Apache 와일드카드 인증서 공유):
    ```
-   SSL_PFX=C:\certs\storhub.pfx
-   SSL_PASS=<pfx 비밀번호>
+   SSL_KEY=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__key.pem
+   SSL_CERT=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__crt.pem
    ```
-   (PEM 환경이면 `SSL_KEY` + `SSL_CERT` 사용)
+   (윈도우 .pfx 환경이면 `SSL_PFX` + `SSL_PASS` 사용, PFX 가 있으면 KEY/CERT 무시)
 
 2. `ecosystem.config.js` 의 `cron_restart: '0 3 * * *'` — 매일 새벽 3시 자동 재시작.
    PM2 가 프로세스를 kill 후 재기동하면 `main.ts` 의 `buildHttpsOptions()` 가 인증서
