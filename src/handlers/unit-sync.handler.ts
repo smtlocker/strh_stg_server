@@ -19,7 +19,7 @@ import {
   findExistingAccessCode,
   generateUniqueAccessCode,
   upsertPtiUserForUnit,
-  deletePtiUserForUnit,
+  deleteAllUserPtisForUnit,
   setPtiUserEnableAllForGroup,
   safeRollback,
 } from '../common/db-utils';
@@ -663,12 +663,16 @@ export class UnitSyncHandler implements WebhookHandler {
         StgEventType.SyncEmpty,
       );
 
-      if (currentUserPhone || currentStgUserId) {
-        await deletePtiUserForUnit(
-          transaction,
-          areaCode,
-          showBoxNo,
-          currentStgUserId,
+      // BoxMaster.userCode 가 이미 공실(orphan)인 경우에도 잔여 PTI 를 정리하도록
+      // UserType='C' 기준 일괄 DELETE. 관리자/시스템 계정(UserType != 'C')은 보호.
+      const ptiDeleted = await deleteAllUserPtisForUnit(
+        transaction,
+        areaCode,
+        showBoxNo,
+      );
+      if (ptiDeleted > 0) {
+        this.logger.log(
+          `[unitSync.syncEmpty] removed ${ptiDeleted} stale PTI row(s) for ${areaCode}:${showBoxNo}`,
         );
       }
 

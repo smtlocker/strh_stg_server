@@ -3,10 +3,10 @@ import { executeMoveOutCompletion } from './move-out-core';
 
 jest.mock('./db-utils', () => ({
   insertBoxHistorySnapshot: jest.fn().mockResolvedValue(undefined),
-  deletePtiUserForUnit: jest.fn().mockResolvedValue(undefined),
+  deleteAllUserPtisForUnit: jest.fn().mockResolvedValue(undefined),
 }));
 
-import { insertBoxHistorySnapshot, deletePtiUserForUnit } from './db-utils';
+import { insertBoxHistorySnapshot, deleteAllUserPtisForUnit } from './db-utils';
 
 const mockQuery = jest.fn();
 const mockInput = jest.fn().mockReturnThis();
@@ -39,11 +39,10 @@ describe('executeMoveOutCompletion', () => {
       1,
       142,
     );
-    expect(deletePtiUserForUnit).toHaveBeenCalledWith(
+    expect(deleteAllUserPtisForUnit).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010001',
       1,
-      undefined,
     );
   });
 
@@ -56,11 +55,10 @@ describe('executeMoveOutCompletion', () => {
       'owner1',
     );
 
-    expect(deletePtiUserForUnit).toHaveBeenCalledWith(
+    expect(deleteAllUserPtisForUnit).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010001',
       1,
-      'owner1',
     );
   });
 

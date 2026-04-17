@@ -9,7 +9,7 @@ jest.mock('../common/db-utils', () => ({
   findExistingAccessCode: jest.fn(),
   generateUniqueAccessCode: jest.fn(),
   upsertPtiUserForUnit: jest.fn(),
-  deletePtiUserForUnit: jest.fn().mockResolvedValue(undefined),
+  deleteAllUserPtisForUnit: jest.fn().mockResolvedValue(undefined),
   setPtiUserEnableAllForGroup: jest.fn(),
   safeRollback: jest.fn().mockImplementation((tx) => tx.rollback()),
 }));
@@ -25,7 +25,7 @@ import {
   findExistingAccessCode,
   generateUniqueAccessCode,
   upsertPtiUserForUnit,
-  deletePtiUserForUnit,
+  deleteAllUserPtisForUnit,
   setPtiUserEnableAllForGroup,
 } from '../common/db-utils';
 import { resolveUnitMapping, extractUserInfo, normalizePhone } from '../common/utils';
@@ -119,11 +119,10 @@ describe('UnitSyncHandler', () => {
       1,
       153,
     );
-    expect(deletePtiUserForUnit).toHaveBeenCalledWith(
+    expect(deleteAllUserPtisForUnit).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010001',
       1,
-      'owner1',
     );
     expect(mockTransaction.commit).toHaveBeenCalled();
   });
@@ -145,7 +144,7 @@ describe('UnitSyncHandler', () => {
     expect(result).toBeNull();
     expect(mockSgApi.getUnitRental).not.toHaveBeenCalled();
     expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
-    expect(deletePtiUserForUnit).not.toHaveBeenCalled();
+    expect(deleteAllUserPtisForUnit).not.toHaveBeenCalled();
     expect(mockTransaction.commit).not.toHaveBeenCalled();
   });
 
@@ -193,11 +192,10 @@ describe('UnitSyncHandler', () => {
 
     expect(mockSgApi.getUnitRental).toHaveBeenCalledWith('rental1');
     expect(mockSgApi.getUser).not.toHaveBeenCalled();
-    expect(deletePtiUserForUnit).toHaveBeenCalledWith(
+    expect(deleteAllUserPtisForUnit).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010001',
       1,
-      'owner1',
     );
     expect(mockSgApi.updateUnitRental).not.toHaveBeenCalled();
   });
@@ -255,7 +253,7 @@ describe('UnitSyncHandler', () => {
       1,
       'owner1',
     );
-    expect(deletePtiUserForUnit).not.toHaveBeenCalled();
+    expect(deleteAllUserPtisForUnit).not.toHaveBeenCalled();
     expect(mockSgApi.updateUnitRental).toHaveBeenCalledWith('rental1', {
       customFields: { gate_code: '654321' },
     });
@@ -281,7 +279,7 @@ describe('UnitSyncHandler', () => {
     ).rejects.toThrow(/has no state/);
 
     expect(mockSgApi.getUser).not.toHaveBeenCalled();
-    expect(deletePtiUserForUnit).not.toHaveBeenCalled();
+    expect(deleteAllUserPtisForUnit).not.toHaveBeenCalled();
     expect(mockSgApi.updateUnitRental).not.toHaveBeenCalled();
   });
 

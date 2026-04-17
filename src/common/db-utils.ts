@@ -349,7 +349,35 @@ export async function relocatePtiUserToUnit(
 }
 
 /**
- * 특정 유닛(areaCode + showBoxNo)에 대응하는 PTI row만 삭제.
+ * 유닛(areaCode + showBoxNo)에 남은 모든 일반 사용자(UserType='C') PTI row 삭제.
+ *
+ * 공실 처리 / 퇴거 완료 등 "이 유닛에 속한 사용자들은 더 이상 접근 권한 없음"
+ * 시점에서 호출. BoxMaster.userCode 가 이미 비어있거나 PTI 와 불일치한 orphan
+ * 상태에서도 정상 동작한다. StgUserId 매칭에 의존하지 않으므로, 과거 사용자 PTI
+ * 가 여러 행 남아있어도 한번에 정리된다.
+ *
+ * UserType !== 'C' (관리자 A / 비매출 X / 기타 시스템 계정) 는 보호.
+ */
+export async function deleteAllUserPtisForUnit(
+  transaction: sql.Transaction,
+  areaCode: string,
+  showBoxNo: number,
+): Promise<number> {
+  const req = new sql.Request(transaction);
+  req.input('areaCode', sql.NVarChar, areaCode);
+  req.input('showBoxNo', sql.Int, showBoxNo);
+  const r = await req.query(`
+    DELETE FROM tblPTIUserInfo
+    WHERE AreaCode = @areaCode
+      AND showBoxNo = @showBoxNo
+      AND UserType = 'C'
+  `);
+  return r.rowsAffected[0] ?? 0;
+}
+
+/**
+ * 특정 유닛(areaCode + showBoxNo) + 특정 StgUserId 한 명의 PTI row 만 삭제.
+ * (정확한 타겟이 있는 경우에만 사용 — orphan 정리가 목적이면 deleteAllUserPtisForUnit.)
  */
 export async function deletePtiUserForUnit(
   transaction: sql.Transaction,

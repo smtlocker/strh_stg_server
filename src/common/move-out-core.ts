@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import * as sql from 'mssql';
 import {
   insertBoxHistorySnapshot,
-  deletePtiUserForUnit,
+  deleteAllUserPtisForUnit,
   setPtiUserEnableAllForGroup,
 } from './db-utils';
 import { StgEventType } from './event-types';
@@ -53,9 +53,10 @@ export async function executeMoveOutCompletion(
   await insertBoxHistorySnapshot(transaction, areaCode, showBoxNo, eventType);
   logger.debug(`tblBoxHistory snapshot inserted (eventType=${eventType})`);
 
-  await deletePtiUserForUnit(transaction, areaCode, showBoxNo, stgUserId);
+  // UserType='C' 기준 일괄 DELETE — orphan 상태(과거 사용자 PTI 잔류)도 함께 정리.
+  const deleted = await deleteAllUserPtisForUnit(transaction, areaCode, showBoxNo);
   logger.log(
-    `tblPTIUserInfo deleted for unit — areaCode=${areaCode}, showBoxNo=${showBoxNo}, stgUserId=${stgUserId ?? '(none)'}`,
+    `tblPTIUserInfo deleted for unit — areaCode=${areaCode}, showBoxNo=${showBoxNo}, rows=${deleted}`,
   );
 
   // Q7: 오버락됐던 유닛이면 같은 group 내 다른 차단 유닛 확인 후 PTI 복구
