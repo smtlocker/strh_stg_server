@@ -100,6 +100,39 @@ node node_modules\pm2\bin\pm2 logs smartcube-sync
 | 사이트 동기화 | 지점 단위 STG↔DB 전체 재동기화 (백그라운드 job, SSE 진행 구독) |
 | 사용자 동기화 | `tblPTIUserInfo` / `tblBoxMaster` 사용자 정보 일괄 재동기화 |
 
+## HTTPS (선택)
+
+STG 는 `https://` URL 로만 webhook 을 발송합니다. 기본 구성은 NestJS 가 HTTP
+(4100 포트) 로 listening 하므로, 외부 공개 시에는 TLS 종단이 필요합니다. 두 가지 선택지:
+
+### 방식 A — IIS 등 기존 리버스 프록시 사용
+
+운영 서버에 이미 IIS + ARR/URL Rewrite 가 다른 서비스(예: 3200 포트) 에 인증서를
+서빙 중이면, 같은 IIS 에 새 사이트(bindings: https 443, SNI 체크)를 추가하고
+`http://localhost:4100` 으로 프록시하면 됩니다. WebSocket 활성화 필요 (SSE 지원).
+
+### 방식 B — NestJS 자체 HTTPS + PM2 주기 재시작 (인프라 의존 최소)
+
+1. `.env` 에 인증서 경로 설정:
+   ```
+   SSL_PFX=C:\certs\storhub.pfx
+   SSL_PASS=<pfx 비밀번호>
+   ```
+   (PEM 환경이면 `SSL_KEY` + `SSL_CERT` 사용)
+
+2. `ecosystem.config.js` 의 `cron_restart: '0 3 * * *'` — 매일 새벽 3시 자동 재시작.
+   PM2 가 프로세스를 kill 후 재기동하면 `main.ts` 의 `buildHttpsOptions()` 가 인증서
+   파일을 다시 읽어 새 TLS 컨텍스트로 교체합니다. moveIn.activate(00:00) /
+   moveOut.block(23:59:59) 스케줄러와 겹치지 않는 안전 구간.
+
+3. 인증서 갱신은 `win-acme`(윈도우) 또는 `certbot`(리눅스) 로 자동화. 갱신 직후
+   바로 반영하려면 win-acme 의 post-request script 로 `pm2 restart smartcube-sync`
+   지정.
+
+4. 인증서 파일 로드 실패 시 부팅을 막지 않고 경고 후 HTTP 로 폴백 — 한밤중 갱신
+   실패로 스케줄러가 멈추는 상황 방지. 다만 이 상태면 외부 webhook 은 TLS 불일치로
+   실패하므로 `pm2 logs` 의 `HTTPS options load failed` 경고를 모니터링하세요.
+
 ## 업데이트 배포
 
 새 `release.zip` 수령 시:
