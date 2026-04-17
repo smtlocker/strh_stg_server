@@ -66,7 +66,7 @@ describe('Swagger document tag coverage', () => {
     // 회귀를 즉시 잡는다. 새 endpoint 추가 시 이 spec 을 함께 갱신해야 함.
     expect(tagCounts['monitoring/dashboard']).toBe(7);
     expect(tagCounts['monitoring/sync']).toBe(6);
-    expect(tagCounts['monitoring/grid']).toBe(4);
+    expect(tagCounts['monitoring/grid']).toBe(5);
     expect(tagCounts['monitoring/debug']).toBe(5);
     expect(tagCounts['auth']).toBe(3);
     expect(tagCounts['access-code']).toBe(1);

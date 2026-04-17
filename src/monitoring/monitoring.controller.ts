@@ -23,6 +23,7 @@ import type { Request } from 'express';
 import { Observable, map } from 'rxjs';
 import { SyncLogService } from './sync-log.service';
 import { SiteSyncService } from './site-sync.service';
+import { StgUnitsCacheService } from './stg-units-cache.service';
 import { UserSyncService } from './user-sync.service';
 import { ReprocessService } from './reprocess.service';
 import { renderDashboardHtml } from './dashboard.html';
@@ -168,6 +169,7 @@ export class MonitoringController {
     private readonly reprocess: ReprocessService,
     private readonly monitoringAuth: MonitoringAuthService,
     private readonly failureAlert: FailureAlertService,
+    private readonly stgUnitsCache: StgUnitsCacheService,
   ) {}
 
   @ApiTags(TAG_DASHBOARD)
@@ -382,7 +384,7 @@ export class MonitoringController {
   @ApiOperation({
     summary: '지점 전체 유닛 (STG 기준 그리드)',
     description:
-      'STG `getUnitsForSite` + active rentals 를 합쳐 그룹별 유닛 + 상태 + overlock 플래그를 반환. 대시보드 [STG] 토글 뷰.',
+      'STG 유닛 캐시에서 즉답. 캐시는 서버 기동 시 11지점 prefetch + 1분 주기 자동 refresh + webhook 이벤트 기반 invalidate 로 유지된다. 캐시 미존재 시에만 on-demand fetch.',
   })
   @ApiQuery({ name: 'officeCode', required: true })
   @ApiResponse({
@@ -391,12 +393,38 @@ export class MonitoringController {
       type: 'object',
       properties: {
         groups: { type: 'array', items: UNIT_GRID_GROUP_SCHEMA },
+        fetchedAt: { type: 'string', format: 'date-time', nullable: true },
       },
     },
   })
   async getStgUnits(@Query('officeCode') officeCode: string) {
-    if (!officeCode) return { groups: [] };
-    return this.siteSync.getStgUnits(officeCode);
+    if (!officeCode) return { groups: [], fetchedAt: null };
+    const entry = await this.stgUnitsCache.getOrFetch(officeCode);
+    return { ...entry.data, fetchedAt: entry.fetchedAt.toISOString() };
+  }
+
+  @ApiTags(TAG_GRID)
+  @Post('api/stg-units/refresh')
+  @ApiOperation({
+    summary: 'STG 유닛 캐시 강제 새로고침 (현재 지점)',
+    description:
+      '주어진 officeCode 에 대해 STG 에서 즉시 재조회 후 캐시 갱신. 응답으로 갱신된 데이터 + fetchedAt 반환.',
+  })
+  @ApiQuery({ name: 'officeCode', required: true })
+  @ApiResponse({
+    status: 201,
+    schema: {
+      type: 'object',
+      properties: {
+        groups: { type: 'array', items: UNIT_GRID_GROUP_SCHEMA },
+        fetchedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  async refreshStgUnits(@Query('officeCode') officeCode: string) {
+    if (!officeCode) return { groups: [], fetchedAt: null };
+    const entry = await this.stgUnitsCache.refresh(officeCode);
+    return { ...entry.data, fetchedAt: entry.fetchedAt.toISOString() };
   }
 
   @ApiTags(TAG_GRID)

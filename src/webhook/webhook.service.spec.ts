@@ -11,6 +11,7 @@ describe('WebhookService', () => {
   const userHandler = { handle: jest.fn() } as any;
   const transferHandler = { handle: jest.fn() } as any;
   const unitSyncHandler = { handle: jest.fn() } as any;
+  const stgUnitsCache = { invalidate: jest.fn() } as any;
 
   const createService = () =>
     new WebhookService(
@@ -22,6 +23,7 @@ describe('WebhookService', () => {
       userHandler,
       transferHandler,
       unitSyncHandler,
+      stgUnitsCache,
     );
 
   beforeEach(() => {

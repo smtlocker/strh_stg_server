@@ -9,6 +9,8 @@ import { TransferHandler } from '../handlers/transfer.handler';
 import { UnitSyncHandler } from '../handlers/unit-sync.handler';
 import { DatabaseService } from '../database/database.service';
 import { SyncMeta } from '../monitoring/monitoring.types';
+import { StgUnitsCacheService } from '../monitoring/stg-units-cache.service';
+import { parseAreaCodeParts } from '../common/db-utils';
 import { buildWebhookDedupKey } from '../common/webhook-dedup';
 
 export interface WebhookHandleResult {
@@ -32,6 +34,7 @@ export class WebhookService {
     private readonly userHandler: UserHandler,
     private readonly transferHandler: TransferHandler,
     private readonly unitSyncHandler: UnitSyncHandler,
+    private readonly stgUnitsCache: StgUnitsCacheService,
   ) {}
 
   async handle(payload: WebhookPayloadDto): Promise<WebhookHandleResult> {
@@ -104,10 +107,26 @@ export class WebhookService {
     }
   }
 
+  /**
+   * 처리 완료 syncMeta 의 areaCode 에서 officeCode 를 추출해 STG 유닛 캐시를
+   * 무효화한다. 해당 지점 그리드가 다음 사이클 이전에도 최신 상태로 갱신된다.
+   */
+  private maybeInvalidateStgCache(meta: SyncMeta | void): void {
+    const areaCode = meta && (meta as SyncMeta).areaCode;
+    if (!areaCode || !areaCode.startsWith('strh')) return;
+    try {
+      const { officeCode } = parseAreaCodeParts(areaCode);
+      this.stgUnitsCache.invalidate(officeCode);
+    } catch {
+      // malformed areaCode — silently ignore
+    }
+  }
+
   private withSyncMeta(
     meta: SyncMeta | void,
     dedupKey?: string | null,
   ): WebhookHandleResult {
+    this.maybeInvalidateStgCache(meta);
     const result: WebhookHandleResult = meta ? { syncMeta: meta } : {};
     if (dedupKey) result.dedupKey = dedupKey;
     return result;

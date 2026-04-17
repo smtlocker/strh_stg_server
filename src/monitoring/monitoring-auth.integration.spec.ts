@@ -19,6 +19,7 @@ import { MonitoringOriginValidatorService } from './monitoring-origin-validator.
 import { ReprocessService } from './reprocess.service';
 import { FailureAlertService } from './failure-alert.service';
 import { SiteSyncService } from './site-sync.service';
+import { StgUnitsCacheService } from './stg-units-cache.service';
 import { SyncLogService } from './sync-log.service';
 import { UserSyncService } from './user-sync.service';
 
@@ -77,6 +78,15 @@ describe('Monitoring auth integration', () => {
       { provide: UserSyncService, useValue: userSync },
       { provide: ReprocessService, useValue: reprocess },
       { provide: FailureAlertService, useValue: { getSmtpInfo: () => ({}), sendTestEmail: async () => ({ ok: false, error: 'test' }) } },
+      {
+        provide: StgUnitsCacheService,
+        useValue: {
+          get: jest.fn().mockReturnValue(null),
+          getOrFetch: jest.fn().mockResolvedValue({ data: { groups: [] }, fetchedAt: new Date() }),
+          refresh: jest.fn().mockResolvedValue({ data: { groups: [] }, fetchedAt: new Date() }),
+          invalidate: jest.fn(),
+        },
+      },
     ],
   })
   class TestMonitoringModule implements NestModule {

@@ -9,6 +9,7 @@ import { WebhookLogInterceptor } from './webhook-log.interceptor';
 import { MonitoringController } from './monitoring.controller';
 import { MonitoringAuthController } from './monitoring-auth.controller';
 import { SiteSyncService } from './site-sync.service';
+import { StgUnitsCacheService } from './stg-units-cache.service';
 import { UserSyncService } from './user-sync.service';
 import { ReplayabilityService } from './replayability.service';
 import { ReprocessService } from './reprocess.service';
@@ -31,6 +32,7 @@ import { MonitoringOriginValidatorService } from './monitoring-origin-validator.
     SyncLogService,
     WebhookLogInterceptor,
     SiteSyncService,
+    StgUnitsCacheService,
     UserSyncService,
     ReplayabilityService,
     ReprocessService,
@@ -45,7 +47,7 @@ import { MonitoringOriginValidatorService } from './monitoring-origin-validator.
     MonitoringSessionMiddleware,
     MonitoringOriginValidatorService,
   ],
-  exports: [SyncLogService, WebhookLogInterceptor],
+  exports: [SyncLogService, WebhookLogInterceptor, StgUnitsCacheService],
 })
 export class MonitoringModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
