@@ -140,7 +140,6 @@ export async function insertPtiUser(
 export async function findExistingAccessCode(
   transaction: sql.Transaction,
   officeCode: string,
-  _userPhone: string,
   stgUserId?: string,
 ): Promise<string | null> {
   if (!stgUserId) return null;
@@ -294,13 +293,11 @@ export async function upsertPtiUserForUnit(
 export async function setPtiUserEnableAllForGroup(
   transaction: sql.Transaction,
   areaCode: string,
-  userPhone: string,
   enable: 0 | 1,
   stgUserId?: string,
 ): Promise<void> {
   const req = new sql.Request(transaction);
   req.input('areaCode', sql.NVarChar, areaCode);
-  req.input('userPhone', sql.NVarChar, userPhone);
   req.input('enable', sql.TinyInt, enable);
   req.input('stgUserId', sql.NVarChar, stgUserId ?? null);
 
@@ -325,7 +322,6 @@ export async function relocatePtiUserToUnit(
     oldShowBoxNo: number;
     newAreaCode: string;
     newShowBoxNo: number;
-    userPhone: string;
     stgUserId?: string;
   },
 ): Promise<void> {
@@ -337,7 +333,6 @@ export async function relocatePtiUserToUnit(
   req.input('newAreaCode', sql.NVarChar, params.newAreaCode);
   req.input('newShowBoxNo', sql.Int, params.newShowBoxNo);
   req.input('newGroupCode', sql.NVarChar, newGroupCode);
-  req.input('userPhone', sql.NVarChar, params.userPhone);
   req.input('stgUserId', sql.NVarChar, params.stgUserId ?? null);
 
   await req.query(`
@@ -360,13 +355,11 @@ export async function deletePtiUserForUnit(
   transaction: sql.Transaction,
   areaCode: string,
   showBoxNo: number,
-  userPhone: string,
   stgUserId?: string,
 ): Promise<void> {
   const req = new sql.Request(transaction);
   req.input('areaCode', sql.NVarChar, areaCode);
   req.input('showBoxNo', sql.Int, showBoxNo);
-  req.input('userPhone', sql.NVarChar, userPhone);
   req.input('stgUserId', sql.NVarChar, stgUserId ?? null);
 
   await req.query(`

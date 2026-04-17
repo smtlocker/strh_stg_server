@@ -384,7 +384,6 @@ export class UnitSyncHandler implements WebhookHandler {
       const existingAccessCode = await findExistingAccessCode(
         transaction,
         officeCode,
-        userPhone,
         ownerId,
       );
       const accessCode =
@@ -480,7 +479,6 @@ export class UnitSyncHandler implements WebhookHandler {
       await setPtiUserEnableAllForGroup(
         transaction,
         areaCode,
-        userPhone,
         groupEnable,
         ownerId,
       );
@@ -670,7 +668,6 @@ export class UnitSyncHandler implements WebhookHandler {
           transaction,
           areaCode,
           showBoxNo,
-          currentUserPhone,
           currentStgUserId,
         );
       }

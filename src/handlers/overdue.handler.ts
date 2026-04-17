@@ -55,15 +55,20 @@ export class OverdueHandler implements WebhookHandler {
 
     const unit = await this.sgApi.getUnit(unitId);
     const parsed = await resolveUnitMapping(this.sgApi, unit);
+    // user 는 필요한 순간에 재사용 — parse 실패 분기에서도 userName 을 대시보드에 남길 수 있도록
+    // 여기서 먼저 조회한다. 실패 시 userName 없이 진행 (에러 대신 조용히 skip).
+    let user;
+    try { user = await this.sgApi.getUser(ownerId); } catch { user = undefined; }
+    const { userPhone, userName } = user
+      ? extractUserInfo(user)
+      : { userPhone: '', userName: undefined };
+
     if (!parsed) {
       const reason = `smartcube_id missing or invalid for unitId ${unitId} (rentalId ${rentalId})`;
       this.logger.warn(`[markOverdue] ${reason} — skipping`);
-      return { softError: reason, stgUserId: ownerId, stgUnitId: unitId };
+      return { softError: reason, stgUserId: ownerId, stgUnitId: unitId, userName };
     }
     const { areaCode, showBoxNo } = parsed;
-
-    const user = await this.sgApi.getUser(ownerId);
-    const { userPhone, userName } = extractUserInfo(user);
 
     const transaction = await this.db.beginTransaction();
     try {
@@ -78,13 +83,7 @@ export class OverdueHandler implements WebhookHandler {
         );
 
       // 같은 그룹 내 모든 PTI Enable=0 (게이트 차단)
-      await setPtiUserEnableAllForGroup(
-        transaction,
-        areaCode,
-        userPhone,
-        0,
-        ownerId,
-      );
+      await setPtiUserEnableAllForGroup(transaction, areaCode, 0, ownerId);
 
       // tblBoxHistory 스냅샷 (Q4)
       await insertBoxHistorySnapshot(
@@ -144,15 +143,18 @@ export class OverdueHandler implements WebhookHandler {
 
     const unit = await this.sgApi.getUnit(unitId);
     const parsed = await resolveUnitMapping(this.sgApi, unit);
+    let user;
+    try { user = await this.sgApi.getUser(ownerId); } catch { user = undefined; }
+    const { userPhone, userName } = user
+      ? extractUserInfo(user)
+      : { userPhone: '', userName: undefined };
+
     if (!parsed) {
       const reason = `smartcube_id missing or invalid for unitId ${unitId} (rentalId ${rentalId})`;
       this.logger.warn(`[unmarkOverdue] ${reason} — skipping`);
-      return { softError: reason, stgUserId: ownerId, stgUnitId: unitId };
+      return { softError: reason, stgUserId: ownerId, stgUnitId: unitId, userName };
     }
     const { areaCode, showBoxNo } = parsed;
-
-    const user = await this.sgApi.getUser(ownerId);
-    const { userPhone, userName } = extractUserInfo(user);
 
     const transaction = await this.db.beginTransaction();
     try {
@@ -181,13 +183,7 @@ export class OverdueHandler implements WebhookHandler {
       const otherOverdueCount = overdueCheck.recordset[0]?.cnt ?? 0;
 
       if (otherOverdueCount === 0) {
-        await setPtiUserEnableAllForGroup(
-          transaction,
-          areaCode,
-          userPhone,
-          1,
-          ownerId,
-        );
+        await setPtiUserEnableAllForGroup(transaction, areaCode, 1, ownerId);
         this.logger.log(`[unmarkOverdue] Group PTI rows re-enabled`);
       } else {
         this.logger.log(

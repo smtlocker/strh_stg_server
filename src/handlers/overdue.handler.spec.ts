@@ -133,7 +133,6 @@ describe('OverdueHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         0,
         'o1',
       );
@@ -190,7 +189,6 @@ describe('OverdueHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         1,
         'o1',
       );

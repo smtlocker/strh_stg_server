@@ -115,7 +115,6 @@ export class MoveInHandler implements WebhookHandler {
       const existingAccessCode = await findExistingAccessCode(
         transaction,
         officeCode,
-        userPhone,
         ownerId,
       );
       accessCodeGenerated = !existingAccessCode;
@@ -228,25 +227,13 @@ export class MoveInHandler implements WebhookHandler {
 
       if (hasBlocker) {
         // blocker 있으면 그룹 전체 Enable=0 (방금 upsert 한 row 포함)
-        await setPtiUserEnableAllForGroup(
-          transaction,
-          areaCode,
-          userPhone,
-          0,
-          ownerId,
-        );
+        await setPtiUserEnableAllForGroup(transaction, areaCode, 0, ownerId);
         this.logger.log(
           `[moveIn.completed] Overlocked unit exists in group — gate stays blocked`,
         );
       } else if (isImmediate) {
         // 즉시 입주 + blocker 없음 → 그룹 전체 Enable=1
-        await setPtiUserEnableAllForGroup(
-          transaction,
-          areaCode,
-          userPhone,
-          1,
-          ownerId,
-        );
+        await setPtiUserEnableAllForGroup(transaction, areaCode, 1, ownerId);
         this.logger.log(
           `[moveIn.completed] Group-wide PTI enabled (Enable=1)`,
         );

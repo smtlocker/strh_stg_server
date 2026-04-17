@@ -123,7 +123,6 @@ describe('UnitSyncHandler', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       'owner1',
     );
     expect(mockTransaction.commit).toHaveBeenCalled();
@@ -198,7 +197,6 @@ describe('UnitSyncHandler', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       'owner1',
     );
     expect(mockSgApi.updateUnitRental).not.toHaveBeenCalled();
@@ -254,7 +252,6 @@ describe('UnitSyncHandler', () => {
     expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010001',
-      '01012345678',
       1,
       'owner1',
     );

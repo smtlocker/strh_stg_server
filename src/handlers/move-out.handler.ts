@@ -65,16 +65,18 @@ export class MoveOutHandler implements WebhookHandler {
     const unitId =
       job.result?.unitId ?? startStep?.result?.unitId ?? job.data?.unitId ?? '';
     const moveOutDate = job.data?.date ?? job.data?.moveOutDate;
+    const ownerId =
+      job.result?.ownerId ?? job.ownerId ?? job.userId ?? '';
 
     if (!moveOutDate) {
       const reason = `no moveOutDate in STG job ${jobId}`;
       this.logger.warn(`MoveOut.created: ${reason} — skipping endTime update`);
-      return { softError: reason };
+      return { softError: reason, stgUserId: ownerId };
     }
     if (!unitId) {
       const reason = `unitId missing in STG job ${jobId}`;
       this.logger.warn(`MoveOut.created: ${reason} — skipping`);
-      return { softError: reason };
+      return { softError: reason, stgUserId: ownerId };
     }
 
     const unit = await this.sgApi.getUnit(unitId);
@@ -82,7 +84,7 @@ export class MoveOutHandler implements WebhookHandler {
     if (!parsed) {
       const reason = `smartcube_id missing for unit ${unitId}`;
       this.logger.warn(`MoveOut.created: ${reason} — skipping`);
-      return { softError: reason, stgUnitId: unitId };
+      return { softError: reason, stgUnitId: unitId, stgUserId: ownerId };
     }
     const { areaCode, showBoxNo } = parsed;
     const stgFetchMs = Date.now() - stgFetchStart;
@@ -237,7 +239,7 @@ export class MoveOutHandler implements WebhookHandler {
     if (!parsed) {
       const reason = `smartcube_id missing or invalid for unitId ${unitId}`;
       this.logger.warn(`MoveOut.completed: ${reason} — skipping`);
-      return { softError: reason, stgUnitId: unitId };
+      return { softError: reason, stgUnitId: unitId, stgUserId: ownerId };
     }
     const { areaCode, showBoxNo } = parsed;
 
@@ -305,13 +307,11 @@ export class MoveOutHandler implements WebhookHandler {
       // 4-3. 즉시 리셋 — 공통 로직 호출.
       //      tblBoxMaster (useState=2, user 비움, boxPassword 기본값) +
       //      tblBoxHistory(135) + tblPTIUserInfo 삭제까지 한 번에 처리.
-      const userPhone = row.userPhone || '';
       const wasOverlocked = row.isOverlocked === 1;
       await executeMoveOutCompletion(
         transaction,
         areaCode,
         showBoxNo,
-        userPhone,
         this.logger,
         ownerId,
         wasOverlocked,
@@ -437,7 +437,6 @@ export class MoveOutHandler implements WebhookHandler {
           await setPtiUserEnableAllForGroup(
             transaction,
             areaCode,
-            cancelledRow.userPhone,
             1,
             cancelledRow.userCode,
           );

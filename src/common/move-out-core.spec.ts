@@ -30,13 +30,7 @@ describe('executeMoveOutCompletion', () => {
   });
 
   it('tblBoxMaster 초기화 + history 142 + 해당 유닛 PTI 삭제', async () => {
-    await executeMoveOutCompletion(
-      mockTransaction,
-      'strh00010001',
-      1,
-      '01012345678',
-      logger,
-    );
+    await executeMoveOutCompletion(mockTransaction, 'strh00010001', 1, logger);
 
     expect(mockQuery).toHaveBeenCalled(); // UPDATE tblBoxMaster
     expect(insertBoxHistorySnapshot).toHaveBeenCalledWith(
@@ -49,7 +43,6 @@ describe('executeMoveOutCompletion', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       undefined,
     );
   });
@@ -59,7 +52,6 @@ describe('executeMoveOutCompletion', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       logger,
       'owner1',
     );
@@ -68,7 +60,6 @@ describe('executeMoveOutCompletion', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       'owner1',
     );
   });
@@ -77,13 +68,7 @@ describe('executeMoveOutCompletion', () => {
     mockQuery.mockRejectedValue(new Error('DB error'));
 
     await expect(
-      executeMoveOutCompletion(
-        mockTransaction,
-        'strh00010001',
-        1,
-        '010',
-        logger,
-      ),
+      executeMoveOutCompletion(mockTransaction, 'strh00010001', 1, logger),
     ).rejects.toThrow('DB error');
   });
 });

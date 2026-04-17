@@ -51,18 +51,35 @@ export class UserHandler implements WebhookHandler {
       return { softError: reason };
     }
 
-    // C 필터: changedKeys 에 우리가 신경 쓰는 필드가 없으면 조용히 skip.
-    // STG 는 language/timezone 등 모든 변경에 user.updated 를 발사하므로,
-    // 우리와 무관한 변경은 STG API 호출도 생략하고 성공 처리.
+    // C 필터: changedKeys 에 우리가 신경 쓰는 필드 (phone/name 계열) 가 없으면 DB 를
+    // 건드리지 않는다. 대신 대시보드 로그에 사용자명이 비지 않도록 STG 에서 이름만
+    // 한번 조회해서 syncMeta 에 채운다. language/timezone/labels 등 비관련 변경도
+    // 운영자가 누구의 변경인지 눈으로 확인할 수 있게 하는 용도.
     const changedKeys = (payload.data?.changedKeys as string[] | undefined) ?? [];
     const hasRelevantChange =
       changedKeys.length === 0 ||
       changedKeys.some((k) => UserHandler.RELEVANT_CHANGE_KEYS.has(k));
     if (!hasRelevantChange) {
+      let userName: string | undefined;
+      try {
+        const user = await this.sgApi.getUser(userId);
+        userName = formatName(
+          (user['lastName'] as string) ?? (user['last_name'] as string) ?? '',
+          (user['firstName'] as string) ?? (user['first_name'] as string) ?? '',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `user.updated: name lookup failed for userId=${userId} — ${(err as Error).message}`,
+        );
+      }
       this.logger.log(
-        `user.updated: skipping userId=${userId} — no relevant field changed (changedKeys=${JSON.stringify(changedKeys)})`,
+        `user.updated: no-op (non-relevant) userId=${userId} userName="${userName ?? ''}" changedKeys=${JSON.stringify(changedKeys)}`,
       );
-      return { stgUserId: userId };
+      return {
+        stgUserId: userId,
+        userName,
+        noopReason: `changedKeys=[${changedKeys.join(', ')}] — phone/name 계열 변경 아님`,
+      };
     }
 
     try {
@@ -99,36 +116,36 @@ export class UserHandler implements WebhookHandler {
         this.logger.log(
           `user.updated: skipping userId=${userId} — not tracked in our DB (no matching rows by stgUserId or phone)`,
         );
-        return { stgUserId: userId, userName };
-      }
-
-      // 추적 중인 사용자인데 STG 에 phone 이 없는 경우 (데이터 이상) → 조용히 skip.
-      // 이전 동작 (softError) 은 대시보드에 실패로 표시돼서 노이즈 발생.
-      if (!userPhone) {
-        this.logger.log(
-          `user.updated: skipping userId=${userId} — tracked but phone missing in STG`,
-        );
-        return { stgUserId: userId, userName };
+        return {
+          stgUserId: userId,
+          userName,
+          noopReason:
+            '호호락 DB 에서 추적되지 않는 사용자 — tblPTIUserInfo / tblBoxMaster 에 매칭 row 없음',
+        };
       }
 
       const transaction = await this.db.beginTransaction();
       try {
-        // 1. tblPTIUserInfo — StgUserId 기준 매칭 우선
+        // 1. tblPTIUserInfo — StgUserId 기준 UPDATE. STG 에 phone 이 없어도
+        //    (userPhone='') 이름 업데이트는 반드시 진행. phone 이 빈 값이면
+        //    DB 의 UserPhone 도 빈 문자열로 수렴.
         const ptiReq1 = new sql.Request(transaction);
         ptiReq1.input('userName', sql.NVarChar, userName);
         ptiReq1.input('userPhone', sql.NVarChar, userPhone);
         ptiReq1.input('stgUserId', sql.NVarChar, userId);
+        // STG 에 phone 이 없으면 DB 의 기존 UserPhone 을 유지 (덮어쓰기 금지).
         let ptiResult = await ptiReq1.query(
           `UPDATE tblPTIUserInfo
               SET UserName   = @userName,
-                  UserPhone  = @userPhone,
+                  UserPhone  = CASE WHEN LEN(@userPhone) > 0 THEN @userPhone ELSE UserPhone END,
                   UpdateTime = GETDATE()
             WHERE StgUserId = @stgUserId`,
         );
         let ptiRows = ptiResult.rowsAffected[0];
 
-        // StgUserId 매칭 실패 시 phone fallback (+ StgUserId 설정)
-        if (ptiRows === 0) {
+        // StgUserId 매칭 실패 + STG 에 phone 이 있을 때만 phone fallback.
+        // phone 이 빈 값이면 fallback 자체가 의미 없으므로 건너뛴다.
+        if (ptiRows === 0 && userPhone) {
           const ptiReq2 = new sql.Request(transaction);
           ptiReq2.input('userName', sql.NVarChar, userName);
           ptiReq2.input('stgUserId', sql.NVarChar, userId);
@@ -148,22 +165,23 @@ export class UserHandler implements WebhookHandler {
           }
         }
 
-        // 2. tblBoxMaster — userCode(=StgUserId) 기준 매칭 우선
+        // 2. tblBoxMaster — userCode(=StgUserId) 기준 UPDATE. phone 없어도 이름 갱신.
         const boxReq1 = new sql.Request(transaction);
         boxReq1.input('userName', sql.NVarChar, userName);
         boxReq1.input('userPhone', sql.NVarChar, userPhone);
         boxReq1.input('stgUserId', sql.NVarChar, userId);
+        // STG 에 phone 이 없으면 DB 의 기존 userPhone 을 유지.
         let boxResult = await boxReq1.query(
           `UPDATE tblBoxMaster
               SET userName   = @userName,
-                  userPhone  = @userPhone,
+                  userPhone  = CASE WHEN LEN(@userPhone) > 0 THEN @userPhone ELSE userPhone END,
                   updateTime = GETDATE()
             WHERE userCode = @stgUserId`,
         );
         let boxRows = boxResult.rowsAffected[0];
 
-        // userCode 매칭 실패 시 phone fallback (+ userCode에 stgUserId 설정)
-        if (boxRows === 0) {
+        // userCode 매칭 실패 + STG 에 phone 이 있을 때만 phone fallback.
+        if (boxRows === 0 && userPhone) {
           const boxReq2 = new sql.Request(transaction);
           boxReq2.input('userName', sql.NVarChar, userName);
           boxReq2.input('stgUserId', sql.NVarChar, userId);

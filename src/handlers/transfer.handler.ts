@@ -83,7 +83,7 @@ export class TransferHandler implements WebhookHandler {
     if (!oldParsed || !newParsed) {
       const reason = `smartcube_id missing — old(${oldUnitId}): ${oldParsed ? 'OK' : 'N/A'}, new(${newUnitId}): ${newParsed ? 'OK' : 'N/A'}`;
       this.logger.warn(`[transfer.completed] ${reason}. Skipping.`);
-      return { softError: reason, stgUnitId: newUnitId };
+      return { softError: reason, stgUnitId: newUnitId, stgUserId: ownerId };
     }
 
     const {
@@ -226,7 +226,6 @@ export class TransferHandler implements WebhookHandler {
         oldShowBoxNo,
         newAreaCode,
         newShowBoxNo,
-        userPhone,
         stgUserId: ownerId,
       });
 
@@ -235,7 +234,6 @@ export class TransferHandler implements WebhookHandler {
       await setPtiUserEnableAllForGroup(
         transaction,
         newAreaCode,
-        userPhone,
         ptiEnable,
         ownerId,
       );
@@ -248,7 +246,6 @@ export class TransferHandler implements WebhookHandler {
         transaction,
         oldAreaCode,
         oldShowBoxNo,
-        userPhone,
         this.logger,
         ownerId,
         inheritedOverlocked === 1, // wasOverlocked: 기존 유닛이 오버락이었으면 기존 그룹 Q7 복구 trigger

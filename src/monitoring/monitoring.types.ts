@@ -13,6 +13,13 @@ export interface SyncMeta {
    * webhook 응답 자체는 여전히 200 (STG의 자동 재시도 방지).
    */
   softError?: string;
+  /**
+   * handler 가 성공적으로 처리됐지만 실제 DB/STG 작업은 수행하지 않은 분기에서,
+   * 운영자가 대시보드에서 사유를 확인할 수 있도록 남기는 설명 문자열.
+   * interceptor 는 이 값을 syncLog `error` 컬럼에 기록하되 `status='success'` 는 유지한다.
+   * 예: "lockUnit/unlockUnit 모두 false — 체크박스 리셋", "changedKeys 에 관련 필드 없음".
+   */
+  noopReason?: string;
 }
 
 export interface SyncLogEntry {

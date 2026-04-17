@@ -76,13 +76,32 @@ describe('UserHandler', () => {
     expect(mockSgApi.getUser).not.toHaveBeenCalled();
   });
 
-  it('user.updated — 무관한 changedKeys (language) → STG 호출 없이 조용히 skip (C 필터)', async () => {
-    await handler.handle({
+  it('user.updated — 무관한 changedKeys (language) → 이름만 조회, DB 갱신 없음', async () => {
+    mockSgApi.getUser.mockResolvedValue({ id: 'u1', lastName: 'Kim', firstName: 'Test' });
+    const res = await handler.handle({
       type: 'user.updated',
       data: { userId: 'u1', changedKeys: ['language'] },
     });
-    expect(mockSgApi.getUser).not.toHaveBeenCalled();
+    expect(mockSgApi.getUser).toHaveBeenCalledWith('u1');
     expect(mockDbService.beginTransaction).not.toHaveBeenCalled();
+    expect(res).toEqual(expect.objectContaining({ stgUserId: 'u1', userName: expect.stringContaining('Kim') }));
+  });
+
+  it('user.updated — 무관한 changedKeys (labels) + STG 호출 실패 → stgUserId 만 반환', async () => {
+    mockSgApi.getUser.mockRejectedValue(new Error('STG down'));
+    const res = await handler.handle({
+      type: 'user.updated',
+      data: { userId: 'u1', changedKeys: ['labels'] },
+    });
+    expect(mockSgApi.getUser).toHaveBeenCalledWith('u1');
+    expect(mockDbService.beginTransaction).not.toHaveBeenCalled();
+    expect(res).toEqual(
+      expect.objectContaining({
+        stgUserId: 'u1',
+        userName: undefined,
+        noopReason: expect.stringContaining('phone/name'),
+      }),
+    );
   });
 
   it('user.updated — changedKeys=[phone] → 정상 처리', async () => {
@@ -104,18 +123,20 @@ describe('UserHandler', () => {
     expect(mockDbService.beginTransaction).not.toHaveBeenCalled();
   });
 
-  it('user.updated — 추적 row 있지만 phone 없음 → 조용히 skip (softError 아님)', async () => {
+  it('user.updated — 추적 row 있지만 STG phone 없음 → StgUserId UPDATE 로 진행 (phone fallback 은 skip)', async () => {
     mockSgApi.getUser.mockResolvedValue({
       id: 'u1',
       phone: '',
       lastName: 'Kim',
     });
+    mockQuery.mockResolvedValue({ rowsAffected: [1] });
     const result = await handler.handle({
       type: 'user.updated',
       data: { userId: 'u1' },
     });
-    expect(mockDbService.beginTransaction).not.toHaveBeenCalled();
-    // softError 없이 SyncMeta 반환 (성공 처리)
+    // phone 이 비어도 stgUserId 기반 UPDATE 는 반드시 실행
+    expect(mockDbService.beginTransaction).toHaveBeenCalled();
+    expect(mockTransaction.commit).toHaveBeenCalled();
     expect(result).toEqual(expect.objectContaining({ stgUserId: 'u1' }));
     expect(result).not.toHaveProperty('softError');
   });

@@ -257,7 +257,6 @@ describe('TransferHandler', () => {
         oldShowBoxNo: 1,
         newAreaCode: 'strh00010002',
         newShowBoxNo: 5,
-        userPhone: '01012345678',
         stgUserId: 'owner1',
       }),
     );
@@ -265,7 +264,6 @@ describe('TransferHandler', () => {
     expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010002',
-      '01012345678',
       1,
       'owner1',
     );
@@ -274,7 +272,6 @@ describe('TransferHandler', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       expect.any(Object),
       'owner1',
       false,
@@ -402,7 +399,6 @@ describe('TransferHandler', () => {
     expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010002',
-      '01012345678',
       0,
       'owner1',
     );
@@ -410,7 +406,6 @@ describe('TransferHandler', () => {
       mockTransaction,
       'strh00010001',
       1,
-      '01012345678',
       expect.any(Object),
       'owner1',
       true, // wasOverlocked: 기존 유닛이 오버락이었으므로 Q7 복구 trigger
@@ -445,7 +440,6 @@ describe('TransferHandler', () => {
     expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010002',
-      '01012345678',
       0,
       'owner1',
     );
@@ -476,7 +470,6 @@ describe('TransferHandler', () => {
     expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
       mockTransaction,
       'strh00010002',
-      '01012345678',
       1,
       'owner1',
     );

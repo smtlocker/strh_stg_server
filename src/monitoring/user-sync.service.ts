@@ -179,37 +179,26 @@ export class UserSyncService {
     const userPhone = normalizePhone(rawPhone);
     const userName = formatName(rawLastName, rawFirstName);
 
-    if (!userPhone) {
-      job.skipped++;
-      job.current++;
-      job.subject.next({
-        type: 'user-skipped',
-        jobId: job.id,
-        userId,
-        userName: userName || user.name || userId,
-        current: job.current,
-        total: job.total,
-        error: '전화번호 없음',
-      });
-      return;
-    }
-
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const transaction = await this.db.beginTransaction();
         try {
-          // tblPTIUserInfo — StgUserId 우선, phone fallback
+          // tblPTIUserInfo — StgUserId 기준 UPDATE. phone 이 비어도 이름 갱신 진행.
           const ptiReq1 = new sql.Request(transaction);
           ptiReq1.input('userName', sql.NVarChar, userName);
           ptiReq1.input('userPhone', sql.NVarChar, userPhone);
           ptiReq1.input('stgUserId', sql.NVarChar, userId);
+          // STG 에 phone 이 없으면 DB 의 기존 UserPhone 유지.
           const ptiResult1 = await ptiReq1.query(
             `UPDATE tblPTIUserInfo
-                SET UserName = @userName, UserPhone = @userPhone, UpdateTime = GETDATE()
+                SET UserName = @userName,
+                    UserPhone = CASE WHEN LEN(@userPhone) > 0 THEN @userPhone ELSE UserPhone END,
+                    UpdateTime = GETDATE()
               WHERE StgUserId = @stgUserId`,
           );
 
-          if (ptiResult1.rowsAffected[0] === 0) {
+          // StgUserId 매칭 실패 + phone 이 있을 때만 phone fallback.
+          if (ptiResult1.rowsAffected[0] === 0 && userPhone) {
             const ptiReq2 = new sql.Request(transaction);
             ptiReq2.input('userName', sql.NVarChar, userName);
             ptiReq2.input('stgUserId', sql.NVarChar, userId);
@@ -221,18 +210,21 @@ export class UserSyncService {
             );
           }
 
-          // tblBoxMaster — userCode(=StgUserId) 우선, phone fallback
+          // tblBoxMaster — userCode(=StgUserId) 기준 UPDATE. phone 없어도 진행.
           const boxReq1 = new sql.Request(transaction);
           boxReq1.input('userName', sql.NVarChar, userName);
           boxReq1.input('userPhone', sql.NVarChar, userPhone);
           boxReq1.input('stgUserId', sql.NVarChar, userId);
+          // STG 에 phone 이 없으면 DB 의 기존 userPhone 유지.
           const boxResult1 = await boxReq1.query(
             `UPDATE tblBoxMaster
-                SET userName = @userName, userPhone = @userPhone, updateTime = GETDATE()
+                SET userName = @userName,
+                    userPhone = CASE WHEN LEN(@userPhone) > 0 THEN @userPhone ELSE userPhone END,
+                    updateTime = GETDATE()
               WHERE userCode = @stgUserId`,
           );
 
-          if (boxResult1.rowsAffected[0] === 0) {
+          if (boxResult1.rowsAffected[0] === 0 && userPhone) {
             const boxReq2 = new sql.Request(transaction);
             boxReq2.input('userName', sql.NVarChar, userName);
             boxReq2.input('stgUserId', sql.NVarChar, userId);

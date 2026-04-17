@@ -104,6 +104,7 @@ export class WebhookLogInterceptor implements NestInterceptor {
         if (logContext.skipLog) return;
         const meta = logContext.syncMeta ?? {};
         const softError = meta?.softError ?? null;
+        const noopReason = meta?.noopReason ?? null;
         void this.syncLog.add({
           source: 'webhook',
           eventType,
@@ -117,7 +118,8 @@ export class WebhookLogInterceptor implements NestInterceptor {
           stgUnitId: meta?.stgUnitId ?? null,
           status: softError ? 'error' : 'success',
           durationMs: Date.now() - startTime,
-          error: softError,
+          // softError 우선. noopReason 은 status='success' 를 유지하면서 사유만 error 컬럼에 남긴다.
+          error: softError ?? noopReason,
           payload: this.attachLogMetadata(body, meta),
         });
       }),

@@ -76,6 +76,24 @@ export class RentalUpdatedHandler implements WebhookHandler {
       return userName;
     };
 
+    // 필수 필드 최우선 resolve — early-return/softError/noopReason 어느 분기로 가든
+    // 대시보드의 지점/유닛/사용자 컬럼이 비지 않도록 return 직전에 unit / user 를
+    // 병렬 fetch. 이미 resolve 돼있으면 cache 히트로 STG 호출 없이 즉시 반환.
+    const buildBaseMeta = async (): Promise<SyncMeta> => {
+      await Promise.all([
+        getParsed().catch(() => undefined),
+        getUserName().catch(() => undefined),
+      ]);
+      return {
+        stgUserId: ownerId,
+        stgUnitId: unitId,
+        ...(parsedCache
+          ? { areaCode: parsedCache.areaCode, showBoxNo: parsedCache.showBoxNo }
+          : {}),
+        ...(userNameCache !== undefined ? { userName: userNameCache } : {}),
+      };
+    };
+
     // -------------------------------------------------------------------------
     // 시나리오 #8: Gate Pin Code Regeneration (Q18 — 시나리오 기준 유일한 활성 플로우)
     // -------------------------------------------------------------------------
@@ -88,7 +106,7 @@ export class RentalUpdatedHandler implements WebhookHandler {
         if (!parsed) {
           const reason = `smartcube_id missing or invalid for unit ${unitId} (generateAccessCode flow)`;
           this.logger.warn(`unitRental.updated: ${reason}, skipping`);
-          return { softError: reason, stgUnitId: unitId };
+          return { softError: reason, stgUnitId: unitId, stgUserId: ownerId };
         }
         const { areaCode, showBoxNo, officeCode } = parsed;
         const user = await this.sgApi.getUser(ownerId);
@@ -157,6 +175,11 @@ export class RentalUpdatedHandler implements WebhookHandler {
         this.logger.log(
           `smartcube_generateAccessCode is false for rental ${rentalId}, no action taken`,
         );
+        return {
+          ...(await buildBaseMeta()),
+          noopReason:
+            'smartcube_generateAccessCode=false — PIN 재생성 요청 아님 (체크박스 리셋)',
+        };
       }
     }
 
@@ -185,7 +208,10 @@ export class RentalUpdatedHandler implements WebhookHandler {
         this.logger.warn(
           `[Overlock] Already in progress — rentalId=${rentalId}, skipping`,
         );
-        return { stgUserId: ownerId, stgUnitId: unitId };
+        return {
+          ...(await buildBaseMeta()),
+          noopReason: `smartcube_lockStatus='${currentStatus}' — 이미 처리중`,
+        };
       }
 
       // 둘 다 true면 중단 + 체크박스 리셋
@@ -199,15 +225,23 @@ export class RentalUpdatedHandler implements WebhookHandler {
             smartcube_unlockUnit: false,
           },
         });
-        return { stgUserId: ownerId, stgUnitId: unitId };
+        return {
+          ...(await buildBaseMeta()),
+          noopReason:
+            'lockUnit=true + unlockUnit=true 동시 요청 — 양쪽 체크박스 리셋',
+        };
       }
 
-      // 요청 없으면 스킵 (체크박스가 false로 리셋된 경우)
+      // 요청 없으면 스킵 (체크박스가 false로 리셋된 경우).
       if (!lockRequested && !unlockRequested) {
         this.logger.log(
           `[Overlock] Lock/unlock checkbox cleared (no action) — rentalId=${rentalId}`,
         );
-        return { stgUserId: ownerId, stgUnitId: unitId };
+        return {
+          ...(await buildBaseMeta()),
+          noopReason:
+            'lockUnit=false + unlockUnit=false — 체크박스 리셋, 실행할 요청 없음',
+        };
       }
 
       // 1. STG 상태를 "in progress"로 변경
@@ -229,7 +263,7 @@ export class RentalUpdatedHandler implements WebhookHandler {
               smartcube_unlockUnit: false,
             },
           });
-          return { softError: reason, stgUnitId: unitId };
+          return { softError: reason, stgUnitId: unitId, stgUserId: ownerId };
         }
         const { areaCode, showBoxNo, officeCode } = parsed;
 
@@ -248,13 +282,7 @@ export class RentalUpdatedHandler implements WebhookHandler {
               .query(
                 `UPDATE tblBoxMaster SET useState = 3, isOverlocked = 1, updateTime = GETDATE() WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`,
               );
-            await setPtiUserEnableAllForGroup(
-              transaction,
-              areaCode,
-              userPhone,
-              0,
-              ownerId,
-            );
+            await setPtiUserEnableAllForGroup(transaction, areaCode, 0, ownerId);
             await insertBoxHistorySnapshot(
               transaction,
               areaCode,
@@ -302,13 +330,7 @@ export class RentalUpdatedHandler implements WebhookHandler {
             const otherCount = otherOverlocked.recordset[0]?.cnt ?? 0;
 
             if (otherCount === 0) {
-              await setPtiUserEnableAllForGroup(
-                transaction,
-                areaCode,
-                userPhone,
-                1,
-                ownerId,
-              );
+              await setPtiUserEnableAllForGroup(transaction, areaCode, 1, ownerId);
               this.logger.log(
                 `[Overlock] Unit unlocked + group gate opened — ${areaCode}:${showBoxNo}`,
               );
@@ -365,20 +387,12 @@ export class RentalUpdatedHandler implements WebhookHandler {
       );
     }
 
-    const parsed = await getParsed();
-    if (!parsed) {
+    const baseMeta = await buildBaseMeta();
+    if (!parsedCache) {
       const reason = `smartcube_id missing or invalid for unit ${unitId}`;
       this.logger.warn(`unitRental.updated: ${reason}, skipping`);
-      return { softError: reason, stgUnitId: unitId };
+      return { ...baseMeta, softError: reason };
     }
-    const { areaCode, showBoxNo } = parsed;
-    const userName = await getUserName();
-    return {
-      areaCode,
-      showBoxNo,
-      userName,
-      stgUserId: ownerId,
-      stgUnitId: unitId,
-    };
+    return baseMeta;
   }
 }

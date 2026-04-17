@@ -215,7 +215,6 @@ describe('ScheduledJobWorkerService', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         job.areaCode,
-        job.userPhone,
         1,
         job.userCode,
       );
@@ -257,7 +256,6 @@ describe('ScheduledJobWorkerService', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         job.areaCode,
-        job.userPhone,
         0,
         job.userCode,
       );
@@ -311,7 +309,6 @@ describe('ScheduledJobWorkerService', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         phoneless.areaCode,
-        '',
         1,
         'stg-user-no-phone',
       );
@@ -363,7 +360,6 @@ describe('ScheduledJobWorkerService', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         job.areaCode,
-        '01012345678',
         0,
         'stg-user-1',
       );

@@ -347,12 +347,11 @@ describe('MoveOutHandler', () => {
         ),
       ).toBe(true);
 
-      // 2) 즉시 reset 공통 로직 호출 (7번째 인자 wasOverlocked=false)
+      // 2) 즉시 reset 공통 로직 호출 (6번째 인자 wasOverlocked=false)
       expect(executeMoveOutCompletion).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
         1,
-        '01012345678',
         expect.anything(), // logger
         'owner1',
         false, // wasOverlocked
@@ -402,7 +401,6 @@ describe('MoveOutHandler', () => {
         mockTransaction,
         'strh00010001',
         1,
-        '01012345678',
         expect.anything(),
         'owner1',
         true, // wasOverlocked=true
@@ -554,7 +552,6 @@ describe('MoveOutHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         1,
         'owner1',
       );

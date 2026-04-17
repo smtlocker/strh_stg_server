@@ -173,7 +173,6 @@ describe('MoveInHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         1,
         'owner1',
       );
@@ -203,7 +202,6 @@ describe('MoveInHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         1,
         'owner1',
       );
@@ -294,7 +292,6 @@ describe('MoveInHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         1,
         'owner1',
       );
@@ -323,7 +320,6 @@ describe('MoveInHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         1,
         'owner1',
       );
@@ -378,7 +374,6 @@ describe('MoveInHandler', () => {
       expect(setPtiUserEnableAllForGroup).toHaveBeenCalledWith(
         mockTransaction,
         'strh00010001',
-        '01012345678',
         0,
         'owner1',
       );

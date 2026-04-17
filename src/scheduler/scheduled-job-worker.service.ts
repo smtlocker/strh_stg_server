@@ -350,7 +350,6 @@ export class ScheduledJobWorkerService {
       await setPtiUserEnableAllForGroup(
         transaction,
         job.areaCode,
-        job.userPhone ?? '',
         hasBlocker ? 0 : 1,
         job.userCode || undefined,
       );
@@ -471,7 +470,6 @@ export class ScheduledJobWorkerService {
           await setPtiUserEnableAllForGroup(
             transaction,
             job.areaCode,
-            row.userPhone,
             0,
             row.userCode || undefined,
           );
