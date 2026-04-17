@@ -4,7 +4,10 @@ import {
   Body,
   Logger,
   HttpCode,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import { randomUUID } from 'crypto';
 import {
   ApiTags,
   ApiOperation,
@@ -20,6 +23,7 @@ import {
   officeCodeToAreaPrefix,
 } from '../common/db-utils';
 import { StgEventType } from '../common/event-types';
+import { SyncLogService } from '../monitoring/sync-log.service';
 import * as sql from 'mssql';
 
 @ApiTags('access-code')
@@ -30,7 +34,55 @@ export class AccessCodeController {
   constructor(
     private readonly db: DatabaseService,
     private readonly sgApi: StoreganiseApiService,
+    private readonly syncLog: SyncLogService,
   ) {}
+
+  /**
+   * PUT /api/access-code 호출 결과를 tblSyncLog 에 기록.
+   * source='api', eventType='api.access-code.update'. areaCode/showBoxNo 는
+   * 지점 내 여러 유닛에 걸치므로 null 로 두고 payload 에 officeCode/accessCode 포함.
+   */
+  private async logAccessCodeChange(params: {
+    stgUserId: string;
+    officeCode: string;
+    accessCode: string;
+    requestId: string;
+    durationMs: number;
+    status: 'success' | 'error';
+    error?: string | null;
+    extra?: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await this.syncLog.add(
+        {
+          source: 'api',
+          eventType: 'api.access-code.update',
+          eventId: params.requestId,
+          correlationKey: `api:access-code:${params.stgUserId}:${params.officeCode}`,
+          businessCode: null,
+          areaCode: null,
+          showBoxNo: null,
+          userName: null,
+          stgUserId: params.stgUserId,
+          stgUnitId: null,
+          status: params.status,
+          durationMs: params.durationMs,
+          error: params.error ?? null,
+          payload: {
+            officeCode: params.officeCode,
+            accessCode: params.accessCode,
+            ...(params.extra ?? {}),
+          },
+        },
+        { suppressAlert: params.status === 'success' },
+      );
+    } catch (logErr) {
+      // syncLog 실패는 메인 응답을 깨뜨리지 않는다.
+      this.logger.warn(
+        `[updateAccessCode] syncLog.add failed: ${(logErr as Error).message}`,
+      );
+    }
+  }
 
   @Put('access-code')
   @HttpCode(200)
@@ -71,10 +123,19 @@ export class AccessCodeController {
       ],
     },
   })
-  async updateAccessCode(@Body() dto: UpdateAccessCodeDto) {
+  async updateAccessCode(
+    @Body() dto: UpdateAccessCodeDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const { stgUserId, officeCode, accessCode } = dto;
+    const startTime = Date.now();
+    // 호출별 고유 식별자 — syncLog.eventId + 응답 헤더(X-Request-Id) 둘 다에 사용.
+    // 호출자가 X-Request-Id 를 보내면 그 값을 재사용, 없으면 uuid 발급.
+    const incoming = res.req?.header('x-request-id');
+    const requestId = incoming && incoming.trim() ? incoming.trim() : randomUUID();
+    res.setHeader('X-Request-Id', requestId);
     this.logger.log(
-      `[updateAccessCode] stgUserId=${stgUserId} officeCode=${officeCode} accessCode=${accessCode}`,
+      `[updateAccessCode] requestId=${requestId} stgUserId=${stgUserId} officeCode=${officeCode} accessCode=${accessCode}`,
     );
 
     // 1. 지점 내 AccessCode 중복 확인 (트랜잭션 밖 — 읽기 전용)
@@ -87,10 +148,18 @@ export class AccessCodeController {
       { officeCode, accessCode, stgUserId },
     );
     if (dupCheck.recordset[0]?.cnt > 0) {
-      return {
+      const message = `AccessCode ${accessCode} is already in use in office ${officeCode}`;
+      await this.logAccessCodeChange({
+        stgUserId,
+        officeCode,
+        accessCode,
+        requestId,
+        durationMs: Date.now() - startTime,
         status: 'error',
-        message: `AccessCode ${accessCode} is already in use in office ${officeCode}`,
-      };
+        error: message,
+        extra: { reason: 'duplicate' },
+      });
+      return { status: 'error', message };
     }
 
     // DB + STG 를 하나의 원자 단위로 — STG 실패 시 DB 도 rollback.
@@ -111,13 +180,19 @@ export class AccessCodeController {
       const rowsAffected = updateResult.rowsAffected[0];
       if (rowsAffected === 0) {
         await transaction.rollback();
-        this.logger.warn(
-          `[updateAccessCode] No PTI record found for stgUserId=${stgUserId} officeCode=${officeCode}`,
-        );
-        return {
+        const message = `No PTI record found for stgUserId=${stgUserId} in office ${officeCode}`;
+        this.logger.warn(`[updateAccessCode] ${message}`);
+        await this.logAccessCodeChange({
+          stgUserId,
+          officeCode,
+          accessCode,
+          requestId,
+          durationMs: Date.now() - startTime,
           status: 'error',
-          message: `No PTI record found for stgUserId=${stgUserId} in office ${officeCode}`,
-        };
+          error: message,
+          extra: { reason: 'pti-not-found' },
+        });
+        return { status: 'error', message };
       }
 
       // 3. tblBoxHistory 스냅샷 — 해당 사용자의 해당 지점 유닛 찾아서 기록
@@ -164,6 +239,19 @@ export class AccessCodeController {
       this.logger.log(
         `[updateAccessCode] success: ${rowsAffected} PTI row(s), ${units.recordset.length} history snapshot(s), ${syncCount} STG rental(s)`,
       );
+      await this.logAccessCodeChange({
+        stgUserId,
+        officeCode,
+        accessCode,
+        requestId,
+        durationMs: Date.now() - startTime,
+        status: 'success',
+        extra: {
+          ptiRowsAffected: rowsAffected,
+          historySnapshotCount: units.recordset.length,
+          stgSyncCount: syncCount,
+        },
+      });
       return { status: 'ok' };
     } catch (err) {
       const message = (err as Error).message || String(err);
@@ -175,6 +263,16 @@ export class AccessCodeController {
         );
       }
       this.logger.error(`[updateAccessCode] rolled back: ${message}`);
+      await this.logAccessCodeChange({
+        stgUserId,
+        officeCode,
+        accessCode,
+        requestId,
+        durationMs: Date.now() - startTime,
+        status: 'error',
+        error: message,
+        extra: { reason: 'transaction-rollback' },
+      });
       return { status: 'error', message };
     }
   }

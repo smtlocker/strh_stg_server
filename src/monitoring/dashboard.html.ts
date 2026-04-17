@@ -114,6 +114,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   .source-badge.scheduler { background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.22); color: var(--purple); }
   .source-badge.site-sync { background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.22); color: var(--green); }
   .source-badge.user-sync { background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.22); color: var(--amber); }
+  .source-badge.api { background: rgba(236,72,153,0.12); border-color: rgba(236,72,153,0.22); color: #ec4899; }
 
 
   /* ── Grid Layout ── */
@@ -464,6 +465,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
             <label class="feed-filter-item"><input type="checkbox" class="source-filter-cb" value="scheduler" onchange="applySourceFilters()" checked> 스케줄러</label>
             <label class="feed-filter-item"><input type="checkbox" class="source-filter-cb" value="site-sync" onchange="applySourceFilters()" checked> 동기화</label>
             <label class="feed-filter-item"><input type="checkbox" class="source-filter-cb" value="user-sync" onchange="applySourceFilters()" checked> 사용자동기화</label>
+            <label class="feed-filter-item"><input type="checkbox" class="source-filter-cb" value="api" onchange="applySourceFilters()" checked> API</label>
           </div>
         </div>
         <select class="feed-select" id="siteSelect" onchange="setSiteFilter(this.value)">
@@ -744,7 +746,8 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     'scheduler.unit_moveOut.blocked': '퇴거 차단(스케줄러)',
     'user.updated': '고객 정보 변경',
     'user.created': '고객 생성',
-    'webhook.retried': '웹훅 재시도'
+    'webhook.retried': '웹훅 재시도',
+    'api.access-code.update': '게이트 PIN 변경'
   };
 
   var RENTAL_KEYS = {
@@ -793,7 +796,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     { key: 'userPhone', label: '사용자 전화번호' },
     { key: 'userName', label: '사용자 이름' }
   ];
-  var currentSources = ['webhook', 'scheduler', 'site-sync', 'user-sync'];
+  var currentSources = ['webhook', 'scheduler', 'site-sync', 'user-sync', 'api'];
   var currentStatus = 'all';
   var currentSite = 'all';
   var currentSchedSite = 'all';
@@ -854,7 +857,11 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   function renderSourceFilterLabel() {
     var btn = document.getElementById('sourceFilterBtn');
     if (!btn) return;
-    if (!currentSources.length || currentSources.length === 4) {
+    if (currentSources.length === 0) {
+      btn.textContent = '소스: 없음';
+      return;
+    }
+    if (currentSources.length === 5) {
       btn.textContent = '소스: 전체';
       return;
     }
@@ -863,6 +870,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     if (currentSources.indexOf('scheduler') >= 0) labels.push('스케줄러');
     if (currentSources.indexOf('site-sync') >= 0) labels.push('동기화');
     if (currentSources.indexOf('user-sync') >= 0) labels.push('사용자동기화');
+    if (currentSources.indexOf('api') >= 0) labels.push('API');
     btn.textContent = '소스: ' + labels.join(', ');
   }
 
@@ -1010,7 +1018,11 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     var src = l.source || 'webhook';
     var srcLabel = src === 'scheduler'
       ? '스케줄러'
-      : (src === 'site-sync' ? '동기화' : (src === 'user-sync' ? '사용자동기화' : '웹훅'));
+      : (src === 'site-sync'
+          ? '동기화'
+          : (src === 'user-sync'
+              ? '사용자동기화'
+              : (src === 'api' ? 'API' : '웹훅')));
     var srcBadge = '<span class="source-badge ' + src + '">' + srcLabel + '</span>';
     var ts = l.createdAt || l.receivedAt;
     var flashCls = flash ? (l.status === 'error' ? ' flash-err' : ' flash') : '';
@@ -1395,13 +1407,12 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     document.querySelectorAll('.source-filter-cb').forEach(function(cb) {
       if (cb.checked) selected.push(cb.value);
     });
-    if (!selected.length) {
-      document.getElementById('sourceAll').checked = true;
-      document.querySelectorAll('.source-filter-cb').forEach(function(cb) { cb.checked = true; });
-      selected = ['webhook', 'scheduler', 'site-sync', 'user-sync'];
-    }
     currentSources = selected;
-    document.getElementById('sourceAll').checked = selected.length === 4;
+    // "전체" 체크박스는 모든 소스가 선택됐을 때만 체크됨. 전체 수는 source-filter-cb
+    // 개수와 일치해야 매직 넘버 하드코딩 제거.
+    var total = document.querySelectorAll('.source-filter-cb').length;
+    document.getElementById('sourceAll').checked =
+      selected.length === total;
     renderSourceFilterLabel();
     currentPage = 1;
     refreshLogs({ preserveScroll: true });

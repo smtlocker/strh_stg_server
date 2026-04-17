@@ -24,7 +24,7 @@ export interface SyncMeta {
 
 export interface SyncLogEntry {
   id: number;
-  source: 'webhook' | 'scheduler' | 'site-sync' | 'user-sync';
+  source: 'webhook' | 'scheduler' | 'site-sync' | 'user-sync' | 'api';
   eventType: string;
   eventId: string | null;
   correlationKey?: string | null;

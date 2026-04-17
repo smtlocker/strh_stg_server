@@ -38,6 +38,16 @@ const LOG_SEARCH_FIELDS: LogSearchField[] = [
 @Injectable()
 export class SyncLogService {
   private readonly logger = new Logger(SyncLogService.name);
+  // 허용되는 source 값. SyncLogEntry.source 타입과 일관성 유지.
+  // 새 source 추가 시 (예: 'api') 이 배열과 monitoring.types.ts 에 동시에 반영.
+  private static readonly SUPPORTED_SOURCES: readonly string[] = [
+    'webhook',
+    'scheduler',
+    'site-sync',
+    'user-sync',
+    'api',
+  ];
+
   readonly events$ = new Subject<SyncLogEntry>();
 
   constructor(
@@ -122,7 +132,7 @@ export class SyncLogService {
     site?: string,
   ): Promise<{ items: SyncLogEntry[]; total: number }> {
     const validSources = (sources ?? []).filter((s) =>
-      ['webhook', 'scheduler', 'site-sync', 'user-sync'].includes(s),
+      SyncLogService.SUPPORTED_SOURCES.includes(s),
     );
     const validStatus = ['success', 'error'].includes(status ?? '')
       ? status
