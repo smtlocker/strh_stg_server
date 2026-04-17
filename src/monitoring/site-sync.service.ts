@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { Subject, Observable } from 'rxjs';
 import { randomUUID } from 'crypto';
 import {
@@ -8,6 +8,7 @@ import {
 import { UnitSyncHandler } from '../handlers/unit-sync.handler';
 import { SyncLogService } from './sync-log.service';
 import { parseSmartcubeId, extractUserInfo } from '../common/utils';
+import { StgUnitsCacheService } from './stg-units-cache.service';
 
 export interface SiteSyncEvent {
   type:
@@ -115,6 +116,8 @@ export class SiteSyncService {
     private readonly sgApi: StoreganiseApiService,
     private readonly unitSyncHandler: UnitSyncHandler,
     private readonly syncLog: SyncLogService,
+    @Inject(forwardRef(() => StgUnitsCacheService))
+    private readonly stgUnitsCache: StgUnitsCacheService,
   ) {}
 
   /**
@@ -219,10 +222,21 @@ export class SiteSyncService {
     const prefix = 'strh' + officeCode;
     const result = await this.syncLog.queryBoxMasterForGrid(prefix);
 
+    // STG 캐시에서 유효한 유닛 키 Set 구축 — STG에 존재하는 유닛만 DB 뷰에 표시
+    const stgKeys = new Set<string>();
+    const stgCache = await this.stgUnitsCache.getOrFetch(officeCode);
+    for (const group of stgCache.data.groups) {
+      for (const unit of group.units) {
+        stgKeys.add(`${group.groupCode}:${unit.showBoxNo}`);
+      }
+    }
+
     const groupMap = new Map<string, SiteSyncGroupUnit[]>();
     for (const row of result) {
       // areaCode = strh + officeCode(3자리) + groupCode(4자리) → slice(7)
       const groupCode = row.areaCode.slice(7);
+      // STG에 존재하지 않는 유닛은 건너뜀
+      if (stgKeys.size > 0 && !stgKeys.has(`${groupCode}:${row.showBoxNo}`)) continue;
       const state: 'occupied' | 'blocked' | 'available' =
         row.useState === 1
           ? 'occupied'

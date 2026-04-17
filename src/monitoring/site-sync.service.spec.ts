@@ -21,10 +21,15 @@ describe('SiteSyncService', () => {
       add: jest.fn().mockResolvedValue(undefined),
     };
 
+    const stgUnitsCache = {
+      getOrFetch: jest.fn().mockResolvedValue({ data: { groups: [] } }),
+    };
+
     const service = new SiteSyncService(
       sgApi as unknown as StoreganiseApiService,
       unitSyncHandler as unknown as UnitSyncHandler,
       syncLog as unknown as SyncLogService,
+      stgUnitsCache as unknown as import('./stg-units-cache.service').StgUnitsCacheService,
     );
 
     return { service, sgApi, unitSyncHandler, syncLog };
