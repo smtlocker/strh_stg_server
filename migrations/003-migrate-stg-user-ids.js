@@ -269,9 +269,9 @@ async function main() {
           continue;
         }
 
-        // occupied + rentalId 확인
+        // occupied/blocked + rentalId 확인 (blocked = 미래 입주 대기)
         const stgState = (unit.state || '').toLowerCase();
-        if (stgState !== 'occupied' || !unit.rentalId) {
+        if ((stgState !== 'occupied' && stgState !== 'blocked') || !unit.rentalId) {
           stats.notOccupied++;
           continue;
         }
