@@ -169,7 +169,11 @@ export class MoveOutHandler implements WebhookHandler {
         }
       }
 
-      // 공통: moveOut.block 스케줄 등록 (immediate/future 모두)
+      // 공통: moveOut.block 스케줄 등록 (immediate/future/과거 모두).
+      // endTime 이 과거여도 worker 가 pending/due 로 보고 다음 tick 에 즉시 실행한다.
+      // 실행 시 per-job 가드(useState != 1, isOverlocked, useTimeType=98)로 idempotency
+      // 가 보장되고, 새 moveIn.completed 가 오면 move-in.handler 가 pending 을 cancel
+      // 하므로 잘못된 차단 위험도 없다.
       const blockJobId = await this.scheduledJobRepo.create(transaction, {
         eventType: ScheduledJobEventType.MoveOutBlock,
         scheduledAt: new Date(endTime),

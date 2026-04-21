@@ -277,6 +277,28 @@ describe('MoveOutHandler', () => {
         }),
       );
     });
+
+    it('과거 날짜여도 schedule 등록 (worker 가 per-job 가드로 idempotency 보장)', async () => {
+      // 3일 전 past date. staleness 제거 후엔 과거여도 등록되어 worker 가 즉시 실행.
+      const pastDateStr = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split('T')[0];
+      (mockSgApi.getJob as jest.Mock).mockResolvedValue({
+        id: 'job1',
+        type: 'unit_moveOut',
+        data: { unitId: 'unit1', date: pastDateStr },
+        steps: [{ id: 'step1', type: 'confirmMovedOut' }],
+      });
+
+      await handler.handle(basePayload);
+
+      expect(mockScheduledJobRepo.create).toHaveBeenCalledWith(
+        mockTransaction,
+        expect.objectContaining({
+          eventType: ScheduledJobEventType.MoveOutBlock,
+        }),
+      );
+    });
   });
 
   // -------------------------------------------------------------------------

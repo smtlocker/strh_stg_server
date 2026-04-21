@@ -31,7 +31,10 @@ export enum ScheduledJobStatus {
   Success = 'success',
   /** maxAttempts 초과로 영구 실패 (이메일 발송 대상) */
   Failed = 'failed',
-  /** 48h 초과로 자동 실행 차단 (운영자 수동 판단 필요) */
+  /**
+   * @deprecated 현재 worker 는 stale 마킹을 하지 않는다. 과거 stale scanner 가
+   * 기록한 historical row 조회와 reprocess.requeue 호환을 위해 enum 값만 유지.
+   */
   Stale = 'stale',
   /** webhook 취소/대체 또는 운영자에 의해 취소 */
   Cancelled = 'cancelled',
@@ -105,9 +108,6 @@ export const RETRY_BACKOFF_MINUTES: readonly number[] = [1, 5, 15];
 
 /** attempts가 이 값을 초과하면 failed 처리 */
 export const MAX_ATTEMPTS_DEFAULT = 4;
-
-/** scheduledAt이 이 시간보다 오래됐으면 자동 실행 차단 (stale) */
-export const STALE_THRESHOLD_HOURS = 48;
 
 /**
  * processing 상태가 이 시간 이상 지속되면 worker crash로 간주하고 pending으로 회수.

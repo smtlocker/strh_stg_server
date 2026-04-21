@@ -252,20 +252,19 @@ export class MoveInHandler implements WebhookHandler {
         `[moveIn.completed] tblBoxHistory snapshot inserted (eventType=${StgEventType.Movein})`,
       );
 
-      // 4-4-1. 이전 사이클의 stale 한 moveOut 관련 pending 스케줄 cleanup.
+      // 4-4-1. 이전 사이클의 남은 moveOut 관련 pending 스케줄 cleanup.
       // 새 임대가 시작된다는 것은 이전 임대 사이클이 완전히 종료됐다는 뜻이므로,
-      // 남아있는 moveOut.block job은 실행되어선 안 된다.
-      // (isOverlocked=1 인 상태에서 stale moveOut.block 스케줄이 stuck 되는 것 방지)
-      const cancelledStale = await this.scheduledJobRepo.cancelPendingForUnit(
+      // 남아있는 moveOut.block job 은 새 사용자 차단 위험이 있어 반드시 cancel.
+      const cancelledPrev = await this.scheduledJobRepo.cancelPendingForUnit(
         transaction,
         areaCode,
         showBoxNo,
         [ScheduledJobEventType.MoveOutBlock],
         'Superseded by new moveIn.completed',
       );
-      if (cancelledStale > 0) {
+      if (cancelledPrev > 0) {
         this.logger.log(
-          `[moveIn.completed] Cancelled ${cancelledStale} stale moveOut schedule(s) from previous cycle — areaCode=${areaCode} showBoxNo=${showBoxNo}`,
+          `[moveIn.completed] Cancelled ${cancelledPrev} moveOut schedule(s) from previous cycle — areaCode=${areaCode} showBoxNo=${showBoxNo}`,
         );
       }
 
@@ -279,6 +278,9 @@ export class MoveInHandler implements WebhookHandler {
           userPhone,
           userCode: ownerId,
           userName,
+          // rentalId 는 worker 가 실행 시점에 STG 재조회로 identity 를 확증할 때 사용.
+          // 레거시 PTI 가 userCode 컬럼을 phone 으로 덮어써서 false-skip 되는 케이스 방어.
+          payload: unitRentalId ? { rentalId: unitRentalId } : null,
           sourceEventType: payload.type,
           sourceEventId: jobId,
           correlationKey: `webhook:${payload.type}:${jobId}`,

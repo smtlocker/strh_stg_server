@@ -12,12 +12,13 @@ import {
   setPtiUserEnableAllForGroup,
 } from '../common/db-utils';
 import { StgEventType } from '../common/event-types';
+import { StoreganiseApiService } from '../storeganise/storeganise-api.service';
+import { verifyUserIdentity } from '../common/user-identity-verifier';
 import { ScheduledJobRepository } from './scheduled-job.repository';
 import {
   MAX_ATTEMPTS_DEFAULT,
   PROCESSING_TIMEOUT_MINUTES,
   RETRY_BACKOFF_MINUTES,
-  STALE_THRESHOLD_HOURS,
   SCHEDULED_JOB_SYNC_LOG_EVENT,
   ScheduledJobEventType,
   ScheduledJobRow,
@@ -33,6 +34,21 @@ type JobExecutionResult =
   | { kind: 'error'; error: Error };
 
 /**
+ * job.payload(JSON 문자열) 에서 rentalId 를 꺼낸다.
+ * identity 재검증 시 STG rental 재조회에 사용. 레거시 payload(없거나 형식이 다른 경우)는 null.
+ */
+function extractRentalId(payload: string | null | undefined): string | null {
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    const value = parsed.rentalId;
+    return typeof value === 'string' && value.trim() ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 스케줄러 worker.
  *
  * 1분 단위로 tblScheduledJob을 폴링하여 due pending job을 실행한다.
@@ -41,13 +57,16 @@ type JobExecutionResult =
  * 흐름:
  *   1. tick 시작
  *   2. stuck scanner — processing이 10분 이상 멈춰있는 job을 pending으로 회수
- *   3. stale scanner — 48h 초과 pending을 stale로 마킹 + syncLog(alert)
- *   4. fetchDue() — pending + due + (nextRetryAt 도래) 조회
- *   5. 각 job마다:
+ *   3. fetchDue() — pending + due + (nextRetryAt 도래) 조회
+ *   4. 각 job마다:
  *      a. markProcessing (attempts++)
  *      b. dispatch → eventType별 handler 호출
  *      c. 결과에 따라 markSuccess / markSkipped / markRetryPending / markFailed
  *      d. syncLog 기록 (source='scheduler', 기존 eventType 재사용)
+ *
+ * Note: 과거 scheduledAt 의 staleness 마킹은 없다. 과거 pending 은 즉시 due 로
+ * 보고 실행하며, per-job 가드가 idempotency 를 보장한다. 운영상 정말 오래된
+ * stuck job 은 대시보드에서 `status='pending' AND scheduledAt < N일` 로 관찰.
  */
 @Injectable()
 export class ScheduledJobWorkerService {
@@ -60,6 +79,7 @@ export class ScheduledJobWorkerService {
     private readonly syncLog: SyncLogService,
     @Inject(forwardRef(() => WebhookService))
     private readonly webhookService: WebhookService,
+    private readonly sgApi: StoreganiseApiService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -77,7 +97,6 @@ export class ScheduledJobWorkerService {
 
     try {
       await this.processStuckProcessing();
-      await this.processStaleJobs();
       await this.processDueJobs();
     } catch (err) {
       this.logger.error(`[tick] Unhandled error: ${(err as Error).message}`);
@@ -109,28 +128,6 @@ export class ScheduledJobWorkerService {
     for (const job of reclaimed) {
       this.logger.warn(
         `[stuck] #${job.jobId} ${job.eventType} ${job.areaCode}:${job.showBoxNo} attempts=${job.attempts}`,
-      );
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Stale scanner
-  // ---------------------------------------------------------------------------
-
-  /** 48h 경과 pending을 stale로 전이 + 알림 */
-  private async processStaleJobs(): Promise<void> {
-    const staleJobs = await this.repo.markStaleOlderThan(STALE_THRESHOLD_HOURS);
-    if (staleJobs.length === 0) return;
-
-    this.logger.warn(
-      `[stale] ${staleJobs.length} job(s) exceeded ${STALE_THRESHOLD_HOURS}h threshold`,
-    );
-
-    for (const job of staleJobs) {
-      await this.recordSyncLogError(
-        job,
-        `Exceeded ${STALE_THRESHOLD_HOURS}h staleness threshold (scheduledAt=${job.scheduledAt.toISOString()})`,
-        0,
       );
     }
   }
@@ -311,17 +308,24 @@ export class ScheduledJobWorkerService {
           reason: `useState is ${row.useState}, no longer blocked`,
         };
       }
-      // 사용자 동일성 비교: STG userId 양쪽에 있으면 그것을 우선 키로 사용하고
-      // 없으면 phone 으로 fallback. phone 만 빈 값이고 stgUserId 가 일치하면
-      // 같은 사용자로 간주한다.
-      const idChanged = job.userCode && row.userCode
-        ? job.userCode !== row.userCode
-        : row.userPhone !== job.userPhone;
-      if (idChanged) {
+      // 사용자 동일성 확인 — verifyUserIdentity 로 추상화된 가드를 사용한다.
+      // 레거시 PTI 중계서버가 tblBoxMaster.userCode 에 phone 을 덮어쓰는 케이스가
+      // 있어, 단순 userCode 비교만으로는 false-skip 이 발생한다. job payload 에
+      // 담긴 rentalId 로 STG 를 재조회해 source-of-truth 와 비교한다.
+      const rentalId = extractRentalId(job.payload);
+      const identity = await verifyUserIdentity(
+        { userCode: job.userCode, userPhone: job.userPhone },
+        { userCode: row.userCode, userPhone: row.userPhone },
+        { rentalId, sgApi: this.sgApi, logger: this.logger },
+      );
+      if (!identity.matches) {
         await transaction.rollback();
+        this.logger.warn(
+          `[moveIn.activate] identity mismatch — #${job.jobId} ${job.areaCode}:${job.showBoxNo} source=${identity.source} ${identity.detail}`,
+        );
         return {
           kind: 'skipped',
-          reason: 'user identity changed since job creation',
+          reason: `user identity changed since job creation (${identity.source}: ${identity.detail})`,
         };
       }
 

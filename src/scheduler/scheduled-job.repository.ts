@@ -487,28 +487,6 @@ export class ScheduledJobRepository {
     return result.recordset;
   }
 
-  /**
-   * pending → stale. scheduledAt이 48h 초과로 경과된 job을 한꺼번에 마킹.
-   *
-   * @returns stale 처리된 job 목록 (알림/로그용)
-   */
-  async markStaleOlderThan(hours: number): Promise<ScheduledJobRow[]> {
-    const result = await this.db.query<ScheduledJobRow>(
-      `UPDATE tblScheduledJob
-       SET status = 'stale',
-           lastError = @reason,
-           updatedAt = GETDATE()
-       OUTPUT INSERTED.*
-       WHERE status = 'pending'
-         AND scheduledAt < DATEADD(hour, -@hours, GETDATE())`,
-      {
-        hours,
-        reason: `Exceeded ${hours}h staleness threshold`,
-      },
-    );
-    return result.recordset;
-  }
-
   // ---------------------------------------------------------------------------
   // 운영/재처리용
   // ---------------------------------------------------------------------------

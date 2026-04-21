@@ -532,6 +532,9 @@ export class UnitSyncHandler implements WebhookHandler {
           userPhone,
           userCode: ownerId,
           userName,
+          // rentalId 는 worker 가 실행 시점에 STG 재조회로 identity 를 확증할 때 사용.
+          // 레거시 PTI 가 userCode 컬럼을 phone 으로 덮어써서 false-skip 되는 케이스 방어.
+          payload: { rentalId },
           sourceEventType: 'unit.sync',
           sourceEventId: moveInJobId ?? rentalId,
           correlationKey: `unit-sync:moveIn.activate:${rentalId}`,
@@ -544,30 +547,24 @@ export class UnitSyncHandler implements WebhookHandler {
       if (moveOutDate) {
         const moveOutScheduledAt = `${moveOutDate} 23:59:59`;
         const scheduledAtDate = new Date(moveOutScheduledAt);
-        // 이미 지난 moveOutDate 는 스케줄 생성 안 함 — worker staleness(48h) 에
-        // 걸려 "실패" 로그만 남고 무의미함. STG 에 오래된 ready/running moveOut
-        // job 이 남아 있는 경우를 방어.
-        if (scheduledAtDate.getTime() < Date.now()) {
-          this.logger.log(
-            `[unitSync] Skipping past-dated moveOut.block — moveOutDate=${moveOutDate} (${areaCode}:${showBoxNo})`,
-          );
-        } else {
-          const blockJobId = await this.scheduledJobRepo.create(transaction, {
-            eventType: ScheduledJobEventType.MoveOutBlock,
-            scheduledAt: scheduledAtDate,
-            areaCode,
-            showBoxNo,
-            userPhone,
-            userCode: ownerId,
-            userName,
-            sourceEventType: 'unit.sync',
-            sourceEventId: moveOutJobId ?? rentalId,
-            correlationKey: `unit-sync:moveOut.block:${rentalId}`,
-          });
-          this.logger.log(
-            `[unitSync] scheduled moveOut.block job #${blockJobId} @ ${moveOutScheduledAt}${isFutureMoveOut ? ' (future)' : ' (today — worker will run asap)'}`,
-          );
-        }
+        // 과거 moveOutDate 여도 스케줄을 생성한다. worker 가 pending/due 로 보고
+        // 다음 tick 에 즉시 실행하며, per-job 가드로 idempotency 를 보장한다.
+        // (새 moveIn 이 들어오면 move-in.handler 가 pending 을 cancel)
+        const blockJobId = await this.scheduledJobRepo.create(transaction, {
+          eventType: ScheduledJobEventType.MoveOutBlock,
+          scheduledAt: scheduledAtDate,
+          areaCode,
+          showBoxNo,
+          userPhone,
+          userCode: ownerId,
+          userName,
+          sourceEventType: 'unit.sync',
+          sourceEventId: moveOutJobId ?? rentalId,
+          correlationKey: `unit-sync:moveOut.block:${rentalId}`,
+        });
+        this.logger.log(
+          `[unitSync] scheduled moveOut.block job #${blockJobId} @ ${moveOutScheduledAt}${isFutureMoveOut ? ' (future)' : ' (past/today — worker will run asap)'}`,
+        );
       }
 
       await transaction.commit();

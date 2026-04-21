@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { DatabaseService } from '../database/database.service';
 import { SyncLogService } from '../monitoring/sync-log.service';
 import { WebhookService } from '../webhook/webhook.service';
+import { StoreganiseApiService } from '../storeganise/storeganise-api.service';
 import { ScheduledJobRepository } from './scheduled-job.repository';
 import { ScheduledJobWorkerService } from './scheduled-job-worker.service';
 import {
@@ -82,6 +83,7 @@ describe('ScheduledJobWorkerService', () => {
   let mockDb: jest.Mocked<Partial<DatabaseService>>;
   let mockSyncLog: jest.Mocked<Partial<SyncLogService>>;
   let mockWebhookSvc: { handle: jest.Mock };
+  let mockSgApi: { getUnitRental: jest.Mock };
   let mockTransaction: { commit: jest.Mock; rollback: jest.Mock };
 
   beforeEach(async () => {
@@ -96,7 +98,6 @@ describe('ScheduledJobWorkerService', () => {
 
     mockRepo = {
       fetchDue: jest.fn().mockResolvedValue([]),
-      markStaleOlderThan: jest.fn().mockResolvedValue([]),
       reclaimStuckProcessing: jest.fn().mockResolvedValue([]),
       markProcessing: jest.fn().mockResolvedValue(undefined),
       markSuccess: jest.fn().mockResolvedValue(undefined),
@@ -113,6 +114,12 @@ describe('ScheduledJobWorkerService', () => {
       handle: jest.fn().mockResolvedValue({}),
     };
 
+    mockSgApi = {
+      // 기본값: identity verifier 가 STG 재조회로 떨어지지 않는 케이스(userCode fast-path)가
+      // 대부분이라 빈 rental 을 리턴해도 안전. 실패 케이스는 테스트별로 override.
+      getUnitRental: jest.fn().mockResolvedValue({ ownerId: undefined }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ScheduledJobWorkerService,
@@ -120,6 +127,7 @@ describe('ScheduledJobWorkerService', () => {
         { provide: ScheduledJobRepository, useValue: mockRepo },
         { provide: SyncLogService, useValue: mockSyncLog },
         { provide: WebhookService, useValue: mockWebhookSvc },
+        { provide: StoreganiseApiService, useValue: mockSgApi },
       ],
     }).compile();
 
@@ -157,33 +165,6 @@ describe('ScheduledJobWorkerService', () => {
       await t1;
 
       expect(mockRepo.fetchDue).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // stale scanner
-  // -------------------------------------------------------------------------
-  describe('processStaleJobs', () => {
-    it('48h 초과 job이 있으면 stale 처리 + syncLog error 기록', async () => {
-      const staleJob = makeJob({
-        jobId: 99,
-        status: ScheduledJobStatus.Stale,
-        scheduledAt: new Date(Date.now() - 72 * 60 * 60 * 1000),
-      });
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([
-        staleJob,
-      ]);
-
-      await worker.tick();
-
-      expect(mockRepo.markStaleOlderThan).toHaveBeenCalledWith(48);
-      expect(mockSyncLog.add).toHaveBeenCalledWith(
-        expect.objectContaining({
-          source: 'scheduler',
-          status: 'error',
-          error: expect.stringContaining('staleness threshold'),
-        }),
-      );
     });
   });
 
@@ -329,6 +310,101 @@ describe('ScheduledJobWorkerService', () => {
         noIdentity.jobId,
         expect.stringContaining('no user identity'),
       );
+    });
+
+    it('레거시가 DB userCode 를 phone 으로 덮어쓴 경우 — STG 재조회로 identity 확증 후 활성화', async () => {
+      // job.userCode 는 STG uid, DB.userCode 는 phone 으로 덮어써진 상태.
+      // payload 의 rentalId 로 STG 에 재조회해서 owner 가 여전히 같음을 확인하면 진행해야 한다.
+      const jobWithRental = makeJob({
+        eventType: ScheduledJobEventType.MoveInActivate,
+        userCode: '69df036a64c84c195ba948a6',
+        userPhone: '01040898769',
+        payload: JSON.stringify({ rentalId: 'rental-abc' }),
+      });
+      (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([jobWithRental]);
+      mockSgApi.getUnitRental.mockResolvedValueOnce({
+        ownerId: '69df036a64c84c195ba948a6',
+      });
+      mockQuery
+        .mockResolvedValueOnce({
+          recordset: [
+            {
+              useState: 3,
+              isOverlocked: 0,
+              userPhone: '0104089876', // 레거시 truncation
+              userCode: '0104089876', // 레거시가 덮어씀 — STG uid 아님
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ recordset: [] })
+        .mockResolvedValueOnce({ recordset: [{ cnt: 0 }] });
+
+      await worker.tick();
+
+      expect(mockSgApi.getUnitRental).toHaveBeenCalledWith('rental-abc');
+      expect(mockRepo.markSuccess).toHaveBeenCalledWith(jobWithRental.jobId);
+      expect(mockRepo.markSkipped).not.toHaveBeenCalled();
+    });
+
+    it('STG 재조회 결과 현재 owner 가 바뀐 경우 → skip (진짜 사용자 변경)', async () => {
+      const jobWithRental = makeJob({
+        eventType: ScheduledJobEventType.MoveInActivate,
+        userCode: 'stg-user-old',
+        userPhone: '01012345678',
+        payload: JSON.stringify({ rentalId: 'rental-xyz' }),
+      });
+      (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([jobWithRental]);
+      mockSgApi.getUnitRental.mockResolvedValueOnce({
+        ownerId: 'stg-user-new', // 소유주 교체
+      });
+      mockQuery.mockResolvedValueOnce({
+        recordset: [
+          {
+            useState: 3,
+            isOverlocked: 0,
+            userPhone: '0101111',
+            userCode: '0101111',
+          },
+        ],
+      });
+
+      await worker.tick();
+
+      expect(mockSgApi.getUnitRental).toHaveBeenCalledWith('rental-xyz');
+      expect(mockRepo.markSuccess).not.toHaveBeenCalled();
+      expect(mockRepo.markSkipped).toHaveBeenCalledWith(
+        jobWithRental.jobId,
+        expect.stringContaining('user identity changed'),
+      );
+    });
+
+    it('rentalId 없고 userCode 양쪽 모두 STG uid 이며 일치 → STG 재조회 없이 fast-path 통과', async () => {
+      // payload 에 rentalId 없어도 (legacy job) 양쪽 userCode 가 STG uid 이면
+      // STG 재조회 없이 빠르게 진행해야 한다.
+      const legacyJob = makeJob({
+        eventType: ScheduledJobEventType.MoveInActivate,
+        userCode: 'stg-user-1',
+        payload: null,
+      });
+      (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([legacyJob]);
+      mockQuery
+        .mockResolvedValueOnce({
+          recordset: [
+            {
+              useState: 3,
+              isOverlocked: 0,
+              userPhone: '01012345678',
+              userCode: 'stg-user-1',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ recordset: [] })
+        .mockResolvedValueOnce({ recordset: [{ cnt: 0 }] });
+
+      await worker.tick();
+
+      expect(mockSgApi.getUnitRental).not.toHaveBeenCalled();
+      expect(mockRepo.markSuccess).toHaveBeenCalledWith(legacyJob.jobId);
     });
   });
 
@@ -483,13 +559,7 @@ describe('ScheduledJobWorkerService', () => {
 
       // --- 2차 시도: handle 성공 ---
       const job2 = makeRetryJob(1);
-      (mockRepo.fetchDue as jest.Mock)
-        .mockResolvedValueOnce([]) // stale
-        .mockResolvedValueOnce([]); // stuck (unused but safe)
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([]);
-      (mockRepo.reclaimStuckProcessing as jest.Mock).mockResolvedValueOnce([]);
       (mockRepo.fetchDue as jest.Mock).mockReset().mockResolvedValueOnce([job2]);
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([]);
       (mockRepo.reclaimStuckProcessing as jest.Mock).mockResolvedValueOnce([]);
       mockWebhookSvc.handle.mockResolvedValueOnce({});
 
@@ -525,7 +595,6 @@ describe('ScheduledJobWorkerService', () => {
       // --- 2차 실패 ---
       const job2 = makeRetryJob(1);
       (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([job2]);
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([]);
       (mockRepo.reclaimStuckProcessing as jest.Mock).mockResolvedValueOnce([]);
       mockWebhookSvc.handle.mockRejectedValueOnce(new Error('timeout'));
 
@@ -543,7 +612,6 @@ describe('ScheduledJobWorkerService', () => {
       // --- 3차 성공 ---
       const job3 = makeRetryJob(2);
       (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([job3]);
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([]);
       (mockRepo.reclaimStuckProcessing as jest.Mock).mockResolvedValueOnce([]);
       mockWebhookSvc.handle.mockResolvedValueOnce({});
 
@@ -575,7 +643,6 @@ describe('ScheduledJobWorkerService', () => {
       // --- 2차 실패 ---
       const job2 = makeRetryJob(1);
       (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([job2]);
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([]);
       (mockRepo.reclaimStuckProcessing as jest.Mock).mockResolvedValueOnce([]);
       mockWebhookSvc.handle.mockRejectedValueOnce(new Error('STG down'));
 
@@ -588,7 +655,6 @@ describe('ScheduledJobWorkerService', () => {
       // --- 3차 실패 → 최종 실패 ---
       const job3 = makeRetryJob(2);
       (mockRepo.fetchDue as jest.Mock).mockResolvedValueOnce([job3]);
-      (mockRepo.markStaleOlderThan as jest.Mock).mockResolvedValueOnce([]);
       (mockRepo.reclaimStuckProcessing as jest.Mock).mockResolvedValueOnce([]);
       mockWebhookSvc.handle.mockRejectedValueOnce(new Error('STG down'));
 
