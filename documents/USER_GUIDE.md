@@ -40,7 +40,7 @@ DB_NAME=HOHO_LOCK_STRH
 
 # Storeganise API
 SG_BASE_URL=https://storhub-kr.storeganise.com/api
-SG_API_KEY=XFQA8_m7P8pMx16iS8W8HWjsVw-j_EDtWEM9XPHdvUgBL7-Uh__p7Odqb8OLKLvf
+SG_API_KEY=mG-o6HsC0LywwGFwqIiAjpWFbSZS_k7H-BYecHiXwiSESAmZ5bDnhV2lKdI-YOIh
 SG_WEBHOOK_SECRET=wBajjl9xXzG-aOP_R5sXj5cnOx52_6OEPT5rHiOcfoM
 
 # 실패 알림 이메일 (SMTP)
