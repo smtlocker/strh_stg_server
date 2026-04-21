@@ -673,6 +673,31 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
 
   <div class="panel" style="margin-top:12px">
     <div class="panel-hd">
+      <div style="font-size:12px;font-weight:600;color:var(--text1)">게이트 AccessCode 변경</div>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:11px;color:var(--text3)">지정한 STG User ID 의 지점(OfficeCode) 내 게이트 핀코드를 새 값으로 일괄 변경합니다. DB(PTI) + STG rental customFields 까지 원자 적용.</div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:10px;align-items:end">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+          STG User ID
+          <input id="accessCodeStgUserId" type="text" placeholder="69df036a64c84c195ba948a6" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:monospace">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+          OfficeCode (3자리)
+          <input id="accessCodeOfficeCode" type="text" placeholder="003" maxlength="4" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:monospace">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
+          새 AccessCode
+          <input id="accessCodeNewCode" type="text" placeholder="123456" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:monospace">
+        </label>
+        <button id="accessCodeSubmit" onclick="submitAccessCodeUpdate()" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;height:32px">변경</button>
+      </div>
+      <div id="accessCodeResult" style="font-size:11px;color:var(--text3);min-height:14px"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-hd">
       <div style="font-size:12px;font-weight:600;color:var(--text1)">이메일 전송 테스트</div>
     </div>
     <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -2323,6 +2348,49 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
       renderPending();
     } catch(e) {}
   }, 60000);
+
+  // ── AccessCode 변경 ──
+  window.submitAccessCodeUpdate = async function() {
+    var stgUserId = document.getElementById('accessCodeStgUserId').value.trim();
+    var officeCode = document.getElementById('accessCodeOfficeCode').value.trim();
+    var accessCode = document.getElementById('accessCodeNewCode').value.trim();
+    var btn = document.getElementById('accessCodeSubmit');
+    var result = document.getElementById('accessCodeResult');
+
+    if (!stgUserId || !officeCode || !accessCode) {
+      result.textContent = 'STG User ID, OfficeCode, AccessCode 세 값 모두 입력하세요';
+      result.style.color = 'var(--red)';
+      return;
+    }
+
+    btn.disabled = true;
+    var originalLabel = btn.textContent;
+    btn.textContent = '요청 중...';
+    result.textContent = '';
+    result.style.color = 'var(--text3)';
+
+    try {
+      var res = await apiFetch('/api/access-code', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stgUserId: stgUserId, officeCode: officeCode, accessCode: accessCode }),
+      });
+      var data = await res.json();
+      if (data.status === 'ok') {
+        result.textContent = '✓ 변경 성공 (DB + STG 적용됨)';
+        result.style.color = 'var(--green)';
+      } else {
+        result.textContent = '✗ 실패: ' + (data.message || '알 수 없는 오류');
+        result.style.color = 'var(--red)';
+      }
+    } catch (err) {
+      result.textContent = '✗ 요청 실패: ' + (err.message || err);
+      result.style.color = 'var(--red)';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  };
 
   // ── Test Email ──
   async function loadTestEmailConfig() {
