@@ -683,8 +683,8 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <input id="accessCodeStgUserId" type="text" placeholder="69df036a64c84c195ba948a6" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:monospace">
         </label>
         <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
-          OfficeCode (3자리)
-          <input id="accessCodeOfficeCode" type="text" placeholder="003" maxlength="4" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:monospace">
+          OfficeCode (4자리)
+          <input id="accessCodeOfficeCode" type="text" placeholder="0003" maxlength="4" style="padding:6px 8px;background:var(--surface1);color:var(--text1);border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:monospace">
         </label>
         <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)">
           새 AccessCode
