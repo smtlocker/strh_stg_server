@@ -38,9 +38,48 @@ export class AccessCodeController {
   ) {}
 
   /**
+   * PTI 조회로 대시보드 표시용 사용자/유닛 정보 해석.
+   * - userName: 같은 StgUserId 는 단일 사용자이므로 어느 row 에서든 첫 non-null 값 사용
+   * - areaCode/showBoxNo: PTI row 가 정확히 1건일 때만 set (다중 유닛이면 모호하므로 null)
+   * 조회 실패해도 메인 흐름을 깨지 않도록 try/catch → 모두 null 반환.
+   */
+  private async resolveUserInfo(
+    stgUserId: string,
+    officeCode: string,
+  ): Promise<{
+    userName: string | null;
+    areaCode: string | null;
+    showBoxNo: number | null;
+  }> {
+    try {
+      const r = await this.db.query<{
+        AreaCode: string;
+        showBoxNo: number;
+        UserName: string | null;
+      }>(
+        `SELECT AreaCode, showBoxNo, UserName FROM tblPTIUserInfo
+         WHERE StgUserId = @stgUserId AND OfficeCode = @officeCode`,
+        { stgUserId, officeCode },
+      );
+      const rows = r.recordset;
+      if (rows.length === 0) {
+        return { userName: null, areaCode: null, showBoxNo: null };
+      }
+      const userName = rows.find((x) => x.UserName)?.UserName ?? null;
+      return {
+        userName,
+        areaCode: rows.length === 1 ? rows[0].AreaCode : null,
+        showBoxNo: rows.length === 1 ? rows[0].showBoxNo : null,
+      };
+    } catch {
+      return { userName: null, areaCode: null, showBoxNo: null };
+    }
+  }
+
+  /**
    * PUT /api/access-code 호출 결과를 tblSyncLog 에 기록.
-   * source='api', eventType='api.access-code.update'. areaCode/showBoxNo 는
-   * 지점 내 여러 유닛에 걸치므로 null 로 두고 payload 에 officeCode/accessCode 포함.
+   * source='api', eventType='api.access-code.update'. PTI 가 단일 유닛이면
+   * areaCode/showBoxNo 도 채워 대시보드에서 지점/유닛 표시되도록 한다.
    */
   private async logAccessCodeChange(params: {
     stgUserId: string;
@@ -51,6 +90,9 @@ export class AccessCodeController {
     status: 'success' | 'error';
     error?: string | null;
     extra?: Record<string, unknown>;
+    areaCode?: string | null;
+    showBoxNo?: number | null;
+    userName?: string | null;
   }): Promise<void> {
     try {
       await this.syncLog.add(
@@ -60,9 +102,9 @@ export class AccessCodeController {
           eventId: params.requestId,
           correlationKey: `api:access-code:${params.stgUserId}:${params.officeCode}`,
           businessCode: null,
-          areaCode: null,
-          showBoxNo: null,
-          userName: null,
+          areaCode: params.areaCode ?? null,
+          showBoxNo: params.showBoxNo ?? null,
+          userName: params.userName ?? null,
           stgUserId: params.stgUserId,
           stgUnitId: null,
           status: params.status,
@@ -149,6 +191,7 @@ export class AccessCodeController {
     );
     if (dupCheck.recordset[0]?.cnt > 0) {
       const message = `AccessCode ${accessCode} is already in use in office ${officeCode}`;
+      const userInfo = await this.resolveUserInfo(stgUserId, officeCode);
       await this.logAccessCodeChange({
         stgUserId,
         officeCode,
@@ -158,6 +201,7 @@ export class AccessCodeController {
         status: 'error',
         error: message,
         extra: { reason: 'duplicate' },
+        ...userInfo,
       });
       return { status: 'error', message };
     }
@@ -239,6 +283,7 @@ export class AccessCodeController {
       this.logger.log(
         `[updateAccessCode] success: ${rowsAffected} PTI row(s), ${units.recordset.length} history snapshot(s), ${syncCount} STG rental(s)`,
       );
+      const userInfo = await this.resolveUserInfo(stgUserId, officeCode);
       await this.logAccessCodeChange({
         stgUserId,
         officeCode,
@@ -251,6 +296,7 @@ export class AccessCodeController {
           historySnapshotCount: units.recordset.length,
           stgSyncCount: syncCount,
         },
+        ...userInfo,
       });
       return { status: 'ok' };
     } catch (err) {
@@ -263,6 +309,7 @@ export class AccessCodeController {
         );
       }
       this.logger.error(`[updateAccessCode] rolled back: ${message}`);
+      const userInfo = await this.resolveUserInfo(stgUserId, officeCode);
       await this.logAccessCodeChange({
         stgUserId,
         officeCode,
@@ -272,6 +319,7 @@ export class AccessCodeController {
         status: 'error',
         error: message,
         extra: { reason: 'transaction-rollback' },
+        ...userInfo,
       });
       return { status: 'error', message };
     }

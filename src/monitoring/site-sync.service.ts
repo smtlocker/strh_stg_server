@@ -544,10 +544,13 @@ export class SiteSyncService {
           eventId: job.id,
           correlationKey: corrId,
           businessCode: null,
-          areaCode: result?.areaCode ?? null,
-          showBoxNo: result?.showBoxNo ?? null,
-          userName: result?.userName ?? null,
-          stgUserId: result?.stgUserId ?? null,
+          // result 가 null (skip) 이어도 smartcube_id 파싱한 areaCode/showBoxNo
+          // + STG owner 정보가 이미 있으므로 fallback 으로 사용 — 대시보드에서
+          // 어느 유닛/사용자가 skip 됐는지 표기 (retry/error path 와 일관).
+          areaCode: result?.areaCode ?? unitAreaCode ?? null,
+          showBoxNo: result?.showBoxNo ?? unitShowBoxNo ?? null,
+          userName: result?.userName ?? ownerName ?? null,
+          stgUserId: result?.stgUserId ?? unitOwnerId ?? null,
           stgUnitId: result?.stgUnitId ?? unitId,
           status: 'success',
           attempt,
