@@ -12,40 +12,24 @@ import { stripFallbackTags } from './monitoring/swagger-tag-utils';
 
 /**
  * HTTPS 옵션을 환경변수 기준으로 구성.
- *
- * 우선순위:
- *   1) SSL_PFX (+ SSL_PASS) — 윈도우 운영 환경의 .pfx 선호. win-acme 가 갱신하고
- *      PM2 cron_restart 로 재기동하면 새 인증서 자동 적용.
- *   2) SSL_KEY + SSL_CERT — 리눅스/크로스플랫폼 .pem.
- *   3) 아무것도 없으면 undefined → 기본 HTTP 서버로 기동 (로컬 개발 등).
- *
- * 파일 읽기 실패 시 bootstrap 을 throw 시키지 않고 경고 후 HTTP 로 폴백 —
- * 운영 실수로 한밤중에 NestJS 가 부팅 못 해 스케줄러가 멈추는 상황을 피한다.
+ * SSL_KEY + SSL_CERT(fullchain) 가 모두 있으면 TLS, 없으면 HTTP 폴백.
+ * 파일 로드 실패 시 throw 하지 않고 경고 후 HTTP 로 폴백 — 한밤중 갱신 실패로
+ * 부팅이 막혀 스케줄러가 멈추는 상황을 피한다.
  */
-function buildHttpsOptions():
-  | { pfx: Buffer; passphrase: string | undefined }
-  | { key: Buffer; cert: Buffer }
-  | undefined {
+function buildHttpsOptions(): { key: Buffer; cert: Buffer } | undefined {
+  if (!process.env.SSL_KEY || !process.env.SSL_CERT) return undefined;
   try {
-    if (process.env.SSL_PFX) {
-      return {
-        pfx: fs.readFileSync(process.env.SSL_PFX),
-        passphrase: process.env.SSL_PASS,
-      };
-    }
-    if (process.env.SSL_KEY && process.env.SSL_CERT) {
-      return {
-        key: fs.readFileSync(process.env.SSL_KEY),
-        cert: fs.readFileSync(process.env.SSL_CERT),
-      };
-    }
+    return {
+      key: fs.readFileSync(process.env.SSL_KEY),
+      cert: fs.readFileSync(process.env.SSL_CERT),
+    };
   } catch (err) {
     Logger.warn(
       `HTTPS options load failed — falling back to HTTP: ${(err as Error).message}`,
       'Bootstrap',
     );
+    return undefined;
   }
-  return undefined;
 }
 
 async function bootstrap() {

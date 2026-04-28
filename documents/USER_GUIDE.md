@@ -52,7 +52,7 @@ SMTP_FROM=SmartCube Alerts <ejunokl@daum.net>       # 예: SmartCube Alerts <ale
 
 # HTTPS (선택) — 설정 시 NestJS 가 직접 TLS 종단. 없으면 HTTP 폴백.
 SSL_KEY=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__key.pem
-SSL_CERT=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__crt.pem
+SSL_CERT=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__fullchain.pem
 ```
 
 > `DB_*`, `SG_*`, `SMTP_*` 는 프로덕션 환경 값으로 반드시 교체하세요.
@@ -120,9 +120,13 @@ STG 는 `https://` URL 로만 webhook 을 발송합니다. 기본 구성은 Nest
 1. `.env` 에 인증서 경로 설정 (현재 운영: Apache 와일드카드 인증서 공유):
    ```
    SSL_KEY=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__key.pem
-   SSL_CERT=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__crt.pem
+   SSL_CERT=C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__fullchain.pem
    ```
-   (윈도우 .pfx 환경이면 `SSL_PFX` + `SSL_PASS` 사용, PFX 가 있으면 KEY/CERT 무시)
+   `SSL_CERT` 는 fullchain(leaf + intermediate)이어야 합니다. 인증서 갱신 후 fullchain 파일이
+   없다면 PowerShell 에서 한 번 만들어 두세요:
+   ```powershell
+   Get-Content "C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__crt.pem","C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__bundle.pem" | Set-Content "C:\Bitnami\wampstack-5.6.29-1\apache2\conf\key\wildcard_hoholock_co_kr__fullchain.pem" -Encoding ASCII
+   ```
 
 2. `ecosystem.config.js` 의 `cron_restart: '0 3 * * *'` — 매일 새벽 3시 자동 재시작.
    PM2 가 프로세스를 kill 후 재기동하면 `main.ts` 의 `buildHttpsOptions()` 가 인증서
