@@ -70,6 +70,24 @@ export class OverdueHandler implements WebhookHandler {
     }
     const { areaCode, showBoxNo } = parsed;
 
+    // STG 가 퇴거 완료 후 미납 invoice 의 past-due 전이로 markOverdue 를 다시 발사할 수
+    // 있어, 'occupied' 가 아닌 rental 에 자동 오버락이 적용되지 않도록 가드한다.
+    // (룰은 unit-sync.handler 의 isOccupiedRental 과 동일 — allow-list)
+    const rentalState =
+      typeof rental.state === 'string' ? rental.state.trim().toLowerCase() : '';
+    if (rentalState !== 'occupied') {
+      const reason = `rental state='${rentalState || 'missing'}' (not occupied) — auto-overlock skipped`;
+      this.logger.log(`[markOverdue] ${reason} — rentalId=${rentalId} unitId=${unitId}`);
+      return {
+        noopReason: reason,
+        areaCode,
+        showBoxNo,
+        userName,
+        stgUserId: ownerId,
+        stgUnitId: unitId,
+      };
+    }
+
     const transaction = await this.db.beginTransaction();
     try {
       // markOverdue: useState=3, isOverlocked=1 마킹

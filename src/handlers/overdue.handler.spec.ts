@@ -82,6 +82,7 @@ describe('OverdueHandler', () => {
       id: 'r1',
       unitId: 'u1',
       ownerId: 'o1',
+      state: 'occupied',
     });
     mockSgApi.getUnit.mockResolvedValue({
       id: 'u1',
@@ -158,6 +159,59 @@ describe('OverdueHandler', () => {
           smartcube_lockUnit: false,
           smartcube_unlockUnit: false,
         },
+      });
+    });
+
+    it.each([
+      ['completed', 'completed'],
+      ['reserved', 'reserved'],
+      ['pre_completed', 'pre_completed'],
+      ['OCCUPIED 가 아닌 대문자 변형', 'Completed'],
+    ])('rental.state=%s → 자동 오버락 skip + noopReason 반환', async (_label, state) => {
+      setupMocks();
+      mockSgApi.getUnitRental.mockResolvedValue({
+        id: 'r1',
+        unitId: 'u1',
+        ownerId: 'o1',
+        state,
+      });
+
+      const result = await handler.handle({
+        type: 'unitRental.markOverdue',
+        data: { unitRentalId: 'r1' },
+      });
+
+      expect(mockTransaction.commit).not.toHaveBeenCalled();
+      expect(mockSgApi.updateUnitRental).not.toHaveBeenCalled();
+      expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
+      expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        noopReason: expect.stringContaining('not occupied'),
+        areaCode: 'strh00010001',
+        showBoxNo: 1,
+        stgUserId: 'o1',
+        stgUnitId: 'u1',
+      });
+    });
+
+    it('rental.state 누락 → 자동 오버락 skip + noopReason="missing"', async () => {
+      setupMocks();
+      mockSgApi.getUnitRental.mockResolvedValue({
+        id: 'r1',
+        unitId: 'u1',
+        ownerId: 'o1',
+        // state 미설정
+      });
+
+      const result = await handler.handle({
+        type: 'unitRental.markOverdue',
+        data: { unitRentalId: 'r1' },
+      });
+
+      expect(mockTransaction.commit).not.toHaveBeenCalled();
+      expect(mockSgApi.updateUnitRental).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        noopReason: expect.stringContaining("state='missing'"),
       });
     });
   });
