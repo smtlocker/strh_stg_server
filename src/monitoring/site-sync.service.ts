@@ -1,14 +1,14 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Subject, Observable } from 'rxjs';
 import { randomUUID } from 'crypto';
 import {
   StoreganiseApiService,
   SgUnit,
+  SgUnitRental,
 } from '../storeganise/storeganise-api.service';
 import { UnitSyncHandler } from '../handlers/unit-sync.handler';
 import { SyncLogService } from './sync-log.service';
 import { parseSmartcubeId, extractUserInfo } from '../common/utils';
-import { StgUnitsCacheService } from './stg-units-cache.service';
 
 export interface SiteSyncEvent {
   type:
@@ -116,8 +116,6 @@ export class SiteSyncService {
     private readonly sgApi: StoreganiseApiService,
     private readonly unitSyncHandler: UnitSyncHandler,
     private readonly syncLog: SyncLogService,
-    @Inject(forwardRef(() => StgUnitsCacheService))
-    private readonly stgUnitsCache: StgUnitsCacheService,
   ) {}
 
   /**
@@ -127,17 +125,22 @@ export class SiteSyncService {
    *   rental.customFields.smartcube_lockStatus === 'overlocked'
    *
    * active rental 전체를 bulk 조회 후 siteId 로 필터링해 rentalId → overlock
-   * 인덱스를 구축한다. 유닛별 개별 rental fetch 대비 수백 배 빠름.
+   * 인덱스를 구축한다. `prefetchedRentals` 가 주어지면 그것을 재사용해
+   * 추가 STG 호출을 피한다 (cron 의 일 1회 풀 스윕에서 11지점이 단일 fetch
+   * 결과를 공유하기 위한 용도).
    */
   async getStgUnits(
     officeCode: string,
+    prefetchedRentals?: SgUnitRental[],
   ): Promise<{ groups: SiteSyncUnitGroup[] }> {
     const siteId = await this.sgApi.getSiteIdByOfficeCode(officeCode);
     if (!siteId) return { groups: [] };
 
     const [allUnits, allRentals] = await Promise.all([
       this.sgApi.getUnitsForSite(siteId),
-      this.sgApi.getActiveRentals(),
+      prefetchedRentals
+        ? Promise.resolve(prefetchedRentals)
+        : this.sgApi.getActiveRentals(),
     ]);
 
     const rentalInfoById = new Map<
@@ -222,21 +225,14 @@ export class SiteSyncService {
     const prefix = 'strh' + officeCode;
     const result = await this.syncLog.queryBoxMasterForGrid(prefix);
 
-    // STG 캐시에서 유효한 유닛 키 Set 구축 — STG에 존재하는 유닛만 DB 뷰에 표시
-    const stgKeys = new Set<string>();
-    const stgCache = await this.stgUnitsCache.getOrFetch(officeCode);
-    for (const group of stgCache.data.groups) {
-      for (const unit of group.units) {
-        stgKeys.add(`${group.groupCode}:${unit.showBoxNo}`);
-      }
-    }
-
+    // DB 그리드는 STG 호출에 의존하지 않는다 — 운영자가 STG 토글을 누르지
+    // 않은 한 STG API 부담을 0 으로 유지하기 위함. STG 와 sync 안 된
+    // zombie 유닛이 있으면 daily 4시 풀 스윕이 정합성 정정 + 운영자에게
+    // 불일치 신호를 제공한다.
     const groupMap = new Map<string, SiteSyncGroupUnit[]>();
     for (const row of result) {
       // areaCode = strh + officeCode(3자리) + groupCode(4자리) → slice(7)
       const groupCode = row.areaCode.slice(7);
-      // STG에 존재하지 않는 유닛은 건너뜀
-      if (stgKeys.size > 0 && !stgKeys.has(`${groupCode}:${row.showBoxNo}`)) continue;
       const state: 'occupied' | 'blocked' | 'available' =
         row.useState === 1
           ? 'occupied'

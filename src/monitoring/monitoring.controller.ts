@@ -384,7 +384,7 @@ export class MonitoringController {
   @ApiOperation({
     summary: '지점 전체 유닛 (STG 기준 그리드)',
     description:
-      'STG 유닛 캐시에서 즉답. 캐시는 서버 기동 시 11지점 prefetch + 1분 주기 자동 refresh + webhook 이벤트 기반 invalidate 로 유지된다. 캐시 미존재 시에만 on-demand fetch.',
+      'STG 유닛 캐시에서 즉답. 캐시는 30분 주기 delta sync (`updatedAfter` cursor) + 매일 새벽 4시 (Asia/Seoul) 풀 스윕 + webhook 이벤트 기반 invalidate (5초 leading-edge debounce per office) 로 유지된다. 캐시 미존재 시에만 on-demand fetch.',
   })
   @ApiQuery({ name: 'officeCode', required: true })
   @ApiResponse({

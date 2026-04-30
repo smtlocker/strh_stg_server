@@ -609,7 +609,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           <div id="groupTabs" style="display:flex;align-items:center;overflow-x:auto;padding:8px 16px;gap:4px;flex:1;min-height:48px"></div>
           <div style="display:flex;align-items:center;padding:8px 16px;border-left:1px solid var(--border)">
             <span id="stgCacheInfo" style="visibility:hidden;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);font-weight:500;min-width:210px;justify-content:flex-end">
-              <span id="stgCacheFetchedAt" style="font-variant-numeric:tabular-nums"></span>
+              <span id="stgCacheFetchedAt" style="font-variant-numeric:tabular-nums">fetched: —</span>
               <button id="stgCacheRefreshBtn" type="button" onclick="refreshStgCache()" title="STG 캐시 새로고침" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);cursor:pointer">
                 <svg id="stgCacheRefreshIcon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
               </button>
@@ -1612,6 +1612,7 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   var _selectedUnits = {}; // { 'groupCode:showBoxNo': true }
   var _unitViewMode = 'db'; // 'stg' | 'db'
   var _lastLoadedOffice = null; // 지점 변경 감지 — 뷰 전환과 지점 전환을 구분
+  var _lastLoadedMode = null; // 뷰 모드 변경 감지 — DB↔STG 전환 시 stale 데이터 깜빡임 방지
 
   function updateUnitViewModeButtons() {
     var btnStg = document.getElementById('unitViewModeStg');
@@ -1644,7 +1645,9 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
   function setStgCacheFetchedAt(iso) {
     var el = document.getElementById('stgCacheFetchedAt');
     if (!el) return;
-    el.textContent = iso ? 'fetched: ' + formatFetchedAt(iso) : '';
+    // STG 캐시가 아직 데워지지 않은 경우 빈 문자열 대신 placeholder 표시.
+    // 운영자가 "정보 영역이 비었구나" 가 아니라 "아직 안 받은 상태구나" 로 인지하게 함.
+    el.textContent = iso ? 'fetched: ' + formatFetchedAt(iso) : 'fetched: —';
   }
   function setStgCacheRefreshing(on) {
     var btn = document.getElementById('stgCacheRefreshBtn');
@@ -1689,23 +1692,29 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
     var tabs = document.getElementById('groupTabs');
     var grid = document.getElementById('unitGrid');
     var sourceLabel = _unitViewMode === 'db' ? '호호락 DB' : 'STG';
-    // 뷰/지점 전환 시에도 기존 활성 그룹이 재조회 결과에 있으면 유지.
-    // 지점이 바뀌어 매칭 groupCode 가 없으면 fallback 으로 첫 그룹.
     var preservedGroupCode = _activeGroupCode;
-    // 지점이 바뀌면 이전 지점 그리드가 남으면 안 되므로 즉시 로딩 placeholder.
-    // 같은 지점에서 뷰 토글이면 기존 렌더 유지 후 fetch 완료 시 교체(stale-while-revalidate).
+    // 동일 지점 + 동일 모드일 때만 stale-while-revalidate (기존 렌더 유지).
+    // 모드 토글(DB↔STG) 또는 지점 변경 시에는 이전 데이터가 의미 다른 source 에서
+    // 온 것이라 깜빡임/혼란 방지를 위해 즉시 로딩 placeholder 로 교체.
     var officeChanged = _lastLoadedOffice !== null && _lastLoadedOffice !== officeCode;
-    var hasExistingData = !officeChanged && _stgData && _stgData.groups && _stgData.groups.length > 0;
+    var modeChanged = _lastLoadedMode !== null && _lastLoadedMode !== _unitViewMode;
+    var hasExistingData = !officeChanged && !modeChanged && _stgData && _stgData.groups && _stgData.groups.length > 0;
     if (!hasExistingData) {
       tabs.innerHTML = '<span style="display:flex;align-items:center;min-height:32px;font-size:11px;color:var(--text3)">' + sourceLabel + ' 유닛 로딩중...</span>';
       grid.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:338px;text-align:center;color:var(--text3);font-size:11px">로딩중...</div>';
     }
     _lastLoadedOffice = officeCode;
+    _lastLoadedMode = _unitViewMode;
     browser.style.display = 'block';
     if (mirror) mirror.value = officeCode;
     document.getElementById('unitSelectAll').checked = false;
     _selectedUnits = {};
     updateUnitViewModeButtons();
+
+    // STG 모드 fetch 동안 새로고침 아이콘을 spin + disable 상태로 표시.
+    // DB 모드는 STG cache 와 무관하므로 spin 안 함.
+    var spinForStg = _unitViewMode === 'stg';
+    if (spinForStg) setStgCacheRefreshing(true);
 
     var endpoint = _unitViewMode === 'db' ? '/monitoring/api/db-units' : '/monitoring/api/stg-units';
     apiFetch(endpoint + '?officeCode=' + officeCode)
@@ -1719,24 +1728,29 @@ const DASHBOARD_HTML_TEMPLATE = `<!DOCTYPE html>
           return;
         }
         var keep = preservedGroupCode && data.groups.some(function(g) { return g.groupCode === preservedGroupCode; });
-        // STG 뷰: 응답의 fetchedAt 이 곧 표시값. DB 뷰: STG 캐시 fetchedAt 은 별도로 조회.
+        // STG 뷰일 때만 fetchedAt 갱신. DB 뷰에서는 STG cache 를 prefetch 하지
+        // 않도록 sidecar fetch 를 제거 — STG API 부담을 0 으로 유지하기 위함.
         if (_unitViewMode === 'stg') {
           setStgCacheFetchedAt(data.fetchedAt);
-        } else {
-          apiFetch('/monitoring/api/stg-units?officeCode=' + officeCode)
-            .then(function(r) { return r.json(); })
-            .then(function(stg) { setStgCacheFetchedAt(stg && stg.fetchedAt); })
-            .catch(function() { /* ignore */ });
         }
         renderGroupTabs();
         selectGroupTab(keep ? preservedGroupCode : data.groups[0].groupCode);
       })
       .catch(function(e) {
         tabs.innerHTML = '<span style="display:flex;align-items:center;min-height:32px;font-size:11px;color:var(--red)">로딩 실패: ' + esc(e.message) + '</span>';
+      })
+      .then(function() {
+        if (spinForStg) setStgCacheRefreshing(false);
       });
   };
 
   window.syncSiteSyncOffice = function(officeCode) {
+    // 지점 변경 시에는 항상 DB 기준으로 fetch — STG API 부담을 줄이기 위함.
+    // 운영자가 명시적으로 STG 토글을 클릭한 경우에만 STG 유닛 정보를 로드.
+    if (_unitViewMode !== 'db') {
+      _unitViewMode = 'db';
+      updateUnitViewModeButtons();
+    }
     loadGroups();
   };
 

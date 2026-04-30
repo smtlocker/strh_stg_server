@@ -138,16 +138,31 @@ export class StoreganiseApiService {
   private readonly logger = new Logger(StoreganiseApiService.name);
   private readonly officeCodeCache = new Map<string, string>();
 
+  /** sites 응답 메모리 캐시. 1시간 TTL — getSiteIdByOfficeCode 가 cron tick
+   * 마다 11회씩 같은 응답을 받던 부담을 제거한다. 사이트 추가/삭제 빈도 매우
+   * 낮은 운영 특성을 활용. */
+  private sitesCache: { data: SgSite[]; fetchedAt: number } | null = null;
+  private static readonly SITES_CACHE_TTL_MS = 60 * 60 * 1000;
+
   /** DEBUG: 남은 강제 실패 횟수 (0이면 정상 동작) */
   static __debugFailCount = 0;
 
   constructor(private readonly httpService: HttpService) {}
 
   async getSites(): Promise<SgSite[]> {
-    return this.request<SgSite[]>(
+    const now = Date.now();
+    if (
+      this.sitesCache &&
+      now - this.sitesCache.fetchedAt < StoreganiseApiService.SITES_CACHE_TTL_MS
+    ) {
+      return this.sitesCache.data;
+    }
+    const data = await this.request<SgSite[]>(
       'GET',
       '/v1/admin/sites?include=customFields',
     );
+    this.sitesCache = { data, fetchedAt: now };
+    return data;
   }
 
   async getJob(jobId: string): Promise<SgJob> {
@@ -247,23 +262,28 @@ export class StoreganiseApiService {
   }
 
   /**
-   * STG 전체 active(occupied/reserved) rental 을 페이지네이션으로 일괄 조회.
-   * 호출측에서 siteId 로 필터링해 사용한다. 그리드 렌더링 시 유닛별 rental
-   * 개별 조회(수백 건) 대신 2~3 회 호출로 대체하는 용도.
+   * STG active rental 페이지네이션 조회. opts.updatedAfter (ISO 8601, 권장: ms
+   * 정밀도 UTC) 가 주어지면 그 시각 이후 갱신된 rental 만 가져오는 delta sync.
+   * 인자가 없으면 전체 active rental 을 풀 페이징 (안전망 — 일 1회만 호출).
    *
    * 안전장치: STG 가 limit 을 무시하거나 cursor 오동작 시 무한 루프 방지 위해
    *   (a) 빈 페이지 감지 시 즉시 중단
    *   (b) offset 절대 상한 (MAX_PAGES × limit)
    */
-  async getActiveRentals(): Promise<SgUnitRental[]> {
+  async getActiveRentals(opts?: {
+    updatedAfter?: string;
+  }): Promise<SgUnitRental[]> {
     const LIMIT = 1000;
     const MAX_PAGES = 100; // 10만 rental 초과 시 이상 — STG 규모상 비현실적
+    const updatedAfterParam = opts?.updatedAfter
+      ? `&updatedAfter=${encodeURIComponent(opts.updatedAfter)}`
+      : '';
     const all: SgUnitRental[] = [];
     for (let page = 0; page < MAX_PAGES; page++) {
       const offset = page * LIMIT;
       const data = await this.request<SgUnitRental[]>(
         'GET',
-        `/v1/admin/unit-rentals?state=active&limit=${LIMIT}&offset=${offset}&include=customFields`,
+        `/v1/admin/unit-rentals?state=active&limit=${LIMIT}&offset=${offset}&include=customFields${updatedAfterParam}`,
       );
       if (!Array.isArray(data) || data.length === 0) break;
       all.push(...data);
