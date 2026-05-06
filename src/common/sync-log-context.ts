@@ -29,6 +29,14 @@ export interface SyncLogContext {
   startTime: number;
   /** 미리 계산된 correlationKey (있으면). 없으면 SyncLogService 가 추론. */
   correlationKey?: string | null;
+  /**
+   * 사전할당된 tblSyncLog.id. 진입점이 request 시작에 SyncLogService.prepare()
+   * 로 placeholder row 를 INSERT 하고 그 id 를 여기에 박아두면, 처리 중
+   * insertBoxHistorySnapshot 이 tblBoxHistory.syncLogId 에 채워 history ↔
+   * syncLog 단일 JOIN 추적이 가능해진다. 미설정(undefined) 이면 NULL 로 INSERT.
+   * (TODO: 진입점 측 prepare/complete 패턴 도입 필요. 현재는 항상 undefined.)
+   */
+  syncLogId?: number | null;
   /** 중간 실패(재시도 직전) 를 sync-log 에 기록하는 콜백. alert 는 자동 suppress. */
   recordRetry: (record: RetryRecord) => void;
 }

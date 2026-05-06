@@ -1,5 +1,6 @@
 import * as sql from 'mssql';
 import { generateAccessCode } from './utils';
+import { getSyncLogContext } from './sync-log-context';
 
 /**
  * 트랜잭션 rollback을 안전하게 수행.
@@ -34,20 +35,31 @@ export async function insertBoxHistorySnapshot(
   req.input('areaCode', sql.NVarChar, areaCode);
   req.input('showBoxNo', sql.Int, showBoxNo);
 
+  // syncLogId 는 SyncLogContext 에 사전할당된 id 가 있으면 그 값으로, 없으면 NULL.
+  // 외부 출처(legacy 호호락) row 는 우리가 INSERT 하지 않으므로 자연히 syncLogId
+  // IS NULL → "외부 vs 우리" 구분에 사용 가능 (단, 진입점 측 prepare 패턴 도입 후).
+  const ctx = getSyncLogContext();
+  const syncLogId = ctx?.syncLogId ?? null;
+  req.input('syncLogId', sql.BigInt, syncLogId);
+
+  // isOverlocked + syncLogId 컬럼은 migrations/006, 007 에서 tblBoxHistory 에 추가됐다.
+  // 마이그레이션 선행 필수 — 미적용 환경에서 INSERT 실패하면 markOverdue 등이 throw.
   await req.query(`
     INSERT INTO tblBoxHistory (
       eventType, areaCode, boxNo, serviceType, boxSizeType, useState,
       userCode, userName, userPhone, dong, addressNum, transCode, transPhone,
       barcode, deliveryType, boxPassword, payCode, payAmount, useTimeType,
       startTime, endTime, createDate, Sequence, gatewaySN, UserCardNo,
-      updateTime, syncTime, lockStatus, adminCardNo, adminPasswd, NfcID
+      updateTime, syncTime, lockStatus, adminCardNo, adminPasswd, NfcID,
+      isOverlocked, syncLogId
     )
     SELECT
       @eventType, areaCode, boxNo, serviceType, boxSizeType, useState,
       userCode, userName, userPhone, dong, addressNum, transCode, transPhone,
       barcode, deliveryType, boxPassword, payCode, payAmount, useTimeType,
       startTime, endTime, GETDATE(), Sequence, gatewaySN, UserCardNo,
-      updateTime, syncTime, lockStatus, adminCardNo, adminPasswd, NfcID
+      updateTime, syncTime, lockStatus, adminCardNo, adminPasswd, NfcID,
+      isOverlocked, @syncLogId
     FROM tblBoxMaster
     WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
   `);

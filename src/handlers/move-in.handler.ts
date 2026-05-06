@@ -129,8 +129,10 @@ export class MoveInHandler implements WebhookHandler {
       // 4-2. 유닛 존재 + 중복 입주 가드
       const boxCheck = await new sql.Request(transaction)
         .input('areaCode', sql.NVarChar, areaCode)
-        .input('showBoxNo', sql.Int, showBoxNo)
-        .query<{ useState: number; userCode: string }>(`
+        .input('showBoxNo', sql.Int, showBoxNo).query<{
+        useState: number;
+        userCode: string;
+      }>(`
           SELECT ISNULL(useState, 0) AS useState, ISNULL(userCode, '') AS userCode
           FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
         `);
@@ -138,7 +140,9 @@ export class MoveInHandler implements WebhookHandler {
       if (!existingRow) {
         await safeRollback(transaction);
         return {
-          areaCode, showBoxNo, stgUserId: ownerId,
+          areaCode,
+          showBoxNo,
+          stgUserId: ownerId,
           softError: `Unit not found in DB: ${areaCode}:${showBoxNo} — smartcube_id 매핑 오류 가능`,
         };
       }
@@ -153,7 +157,9 @@ export class MoveInHandler implements WebhookHandler {
       ) {
         await safeRollback(transaction);
         return {
-          areaCode, showBoxNo, stgUserId: ownerId,
+          areaCode,
+          showBoxNo,
+          stgUserId: ownerId,
           softError: `Unit already occupied by ${existingUserCode}: ${areaCode}:${showBoxNo}`,
         };
       }
@@ -163,6 +169,15 @@ export class MoveInHandler implements WebhookHandler {
       const isImmediate =
         !startDate || new Date(`${startDate}T00:00:00`) <= new Date();
       const useState = isImmediate ? 1 : 3;
+
+      // 신규 입주 (vacant 또는 다른 사용자였음) 인 경우에만 isOverlocked 를 reset.
+      // 같은 사용자의 webhook replay (10초 dedup 윈도우 밖) 시엔 그 사이 정당하게
+      // 박힌 manual overlock / markOverdue 를 덮어쓰면 안 되므로 기존 값 유지.
+      // 새 사용자 입주: 이전 사이클의 잘못된 markOverdue 잔존 비트가 blockerCheck
+      // 를 false-positive 로 hit 시키는 사고 방지 (Park, Gyong jin 2026-05-04 case).
+      // (transfer.handler 는 의도적으로 inheritedOverlocked 를 승계 — 다른 정책)
+      const isFreshTenancy =
+        existingRow.useState !== 1 || existingRow.userCode !== ownerId;
 
       const req1 = new sql.Request(transaction);
       req1.input('userCode', sql.NVarChar, ownerId);
@@ -185,6 +200,7 @@ export class MoveInHandler implements WebhookHandler {
           useTimeType   = 99,
           payType       = 1,
           deliveryType  = 1,
+          isOverlocked  = ${isFreshTenancy ? '0' : 'isOverlocked'},
           updateTime    = GETDATE()
         WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo
       `);
@@ -234,9 +250,7 @@ export class MoveInHandler implements WebhookHandler {
       } else if (isImmediate) {
         // 즉시 입주 + blocker 없음 → 그룹 전체 Enable=1
         await setPtiUserEnableAllForGroup(transaction, areaCode, 1, ownerId);
-        this.logger.log(
-          `[moveIn.completed] Group-wide PTI enabled (Enable=1)`,
-        );
+        this.logger.log(`[moveIn.completed] Group-wide PTI enabled (Enable=1)`);
       }
       // 미래 입주 + blocker 없음 → 그룹 전체는 건드리지 않음
       // (다른 활성 유닛의 Enable=1 유지, 방금 upsert 한 row 만 Enable=0)

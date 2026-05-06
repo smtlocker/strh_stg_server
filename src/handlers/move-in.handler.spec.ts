@@ -101,7 +101,10 @@ describe('MoveInHandler', () => {
 
     jest.clearAllMocks();
     mockInput.mockReturnThis();
-    mockQuery.mockResolvedValue({ recordset: [{ useState: 2, userCode: '' }], rowsAffected: [1] });
+    mockQuery.mockResolvedValue({
+      recordset: [{ useState: 2, userCode: '' }],
+      rowsAffected: [1],
+    });
     (findExistingAccessCode as jest.Mock).mockResolvedValue(null);
     (
       require('../common/db-utils').generateUniqueAccessCode as jest.Mock
@@ -337,6 +340,73 @@ describe('MoveInHandler', () => {
       });
     });
 
+    it('새 사용자 입주 시 tblBoxMaster.isOverlocked 를 0 으로 명시 reset', async () => {
+      // Regression: 이전 사이클에서 잘못 박힌 isOverlocked=1 잔존이 새 사용자에게
+      // 들고가면 직후 blockerCheck 가 false-positive 로 hit → 그룹 PTI 가 통째로
+      // Enable=0 으로 차단되는 사고가 있었다 (Park, Gyong jin 2026-05-04 케이스).
+      // UPDATE 문에 isOverlocked = 0 이 포함돼야 한다.
+      setupStgMocks(undefined);
+      await handler.handle({
+        type: 'job.unit_moveIn.completed',
+        data: { jobId: 'job1' },
+      });
+
+      const updateCall = mockQuery.mock.calls.find((c) =>
+        (c[0] as string).includes('UPDATE tblBoxMaster'),
+      );
+      expect(updateCall).toBeDefined();
+      // SQL 템플릿 들여쓰기 변경에도 깨지지 않도록 regex match.
+      expect(updateCall![0]).toMatch(/isOverlocked\s*=\s*0/);
+    });
+
+    it('같은 사용자 replay (useState=1 + userCode=ownerId) → isOverlocked 보존 (덮어쓰지 않음)', async () => {
+      // 10초 dedup 윈도우 밖에서 webhook replay 가 발생하면 같은 사용자에게 다시
+      // move-in.handler 가 호출될 수 있다. 그 사이 manual overlock 이나 markOverdue
+      // 로 정당하게 박힌 isOverlocked=1 을 silently reset 하지 않도록 보존.
+      setupStgMocks(undefined);
+      mockQuery.mockResolvedValueOnce({
+        // 같은 사용자가 이미 활성 (replay 케이스)
+        recordset: [{ useState: 1, userCode: 'owner1' }],
+        rowsAffected: [1],
+      });
+
+      await handler.handle({
+        type: 'job.unit_moveIn.completed',
+        data: { jobId: 'job1' },
+      });
+
+      const updateCall = mockQuery.mock.calls.find((c) =>
+        (c[0] as string).includes('UPDATE tblBoxMaster'),
+      );
+      expect(updateCall).toBeDefined();
+      // 보존: isOverlocked = isOverlocked (덮어쓰기 없음)
+      expect(updateCall![0]).toMatch(/isOverlocked\s*=\s*isOverlocked/);
+      expect(updateCall![0]).not.toMatch(/isOverlocked\s*=\s*0/);
+    });
+
+    it('blockerCheck — 이전 사이클의 isOverlocked=1 잔존이 hit 하지 않아야 함', async () => {
+      // 시나리오: 1305 가 이전 사이클에서 isOverlocked=1 로 남아있었음.
+      // 새 사용자 move-in 처리 시 우리 UPDATE 가 그 비트를 0 으로 reset 했으므로
+      // 같은 트랜잭션 안의 blockerCheck 는 cnt=0 (false-positive 없음) → 미래 입주
+      // 분기에서 그룹 PTI 를 건드리지 않아야 한다.
+      setupStgMocks('2099-12-01');
+      mockQuery
+        .mockResolvedValueOnce({
+          recordset: [{ useState: 2, userCode: '' }],
+          rowsAffected: [1],
+        }) // 유닛 존재 가드
+        .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] }) // tblBoxMaster UPDATE (isOverlocked=0 포함)
+        .mockResolvedValueOnce({ recordset: [{ cnt: 0 }], rowsAffected: [1] }); // blockerCheck — UPDATE 후 0
+
+      await handler.handle({
+        type: 'job.unit_moveIn.completed',
+        data: { jobId: 'job1' },
+      });
+
+      // 미래 입주 + blocker 없음 → 그룹 전체 setPtiUserEnableAllForGroup 호출 안 함
+      expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
+    });
+
     it('트랜잭션 에러 → 롤백 + throw', async () => {
       setupStgMocks();
       mockQuery.mockRejectedValueOnce(new Error('DB fail'));
@@ -353,7 +423,10 @@ describe('MoveInHandler', () => {
       setupStgMocks(undefined);
       // Blocker check returns 1 overlocked unit
       mockQuery
-        .mockResolvedValueOnce({ recordset: [{ useState: 2, userCode: '' }], rowsAffected: [1] }) // 유닛 존재 가드
+        .mockResolvedValueOnce({
+          recordset: [{ useState: 2, userCode: '' }],
+          rowsAffected: [1],
+        }) // 유닛 존재 가드
         .mockResolvedValueOnce({ recordset: [], rowsAffected: [1] }) // tblBoxMaster UPDATE
         .mockResolvedValueOnce({ recordset: [{ cnt: 1 }], rowsAffected: [1] }); // blocker check
 

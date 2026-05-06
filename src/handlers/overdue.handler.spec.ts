@@ -9,6 +9,7 @@ jest.mock('../common/db-utils', () => ({
     .fn()
     .mockReturnValue({ officeCode: '0001', groupCode: '0001' }),
   setPtiUserEnableAllForGroup: jest.fn().mockResolvedValue(undefined),
+  safeRollback: jest.fn().mockImplementation((tx) => tx.rollback()),
 }));
 
 jest.mock('../common/utils', () => ({
@@ -74,7 +75,13 @@ describe('OverdueHandler', () => {
 
     jest.clearAllMocks();
     mockInput.mockReturnThis();
-    mockQuery.mockResolvedValue({ recordset: [{ cnt: 0 }], rowsAffected: [1] });
+    // 기본 mockQuery — markOverdue 의 새 dbState 가드 (useState/userCode SELECT) 와
+    // unmarkOverdue 의 overdueCheck (cnt SELECT) 양쪽을 동시에 만족시키는 row.
+    // 정상 점유 상태 (useState=1, userCode='o1') + cnt=0.
+    mockQuery.mockResolvedValue({
+      recordset: [{ useState: 1, userCode: 'o1', cnt: 0 }],
+      rowsAffected: [1],
+    });
   });
 
   const setupMocks = () => {
@@ -162,18 +169,13 @@ describe('OverdueHandler', () => {
       });
     });
 
-    it.each([
-      ['completed', 'completed'],
-      ['reserved', 'reserved'],
-      ['pre_completed', 'pre_completed'],
-      ['OCCUPIED 가 아닌 대문자 변형', 'Completed'],
-    ])('rental.state=%s → 자동 오버락 skip + noopReason 반환', async (_label, state) => {
+    it('DB 공실 (useState=2) → skip + noopReason="DB unit vacant"', async () => {
+      // Park, Gyong jin 2026-05-04 회귀 가드. 04-29 에 퇴거된 rental 에 05-01 markOverdue
+      // 가 발사돼 isOverlocked=1 잔존이 박힌 사고를 막는다.
       setupMocks();
-      mockSgApi.getUnitRental.mockResolvedValue({
-        id: 'r1',
-        unitId: 'u1',
-        ownerId: 'o1',
-        state,
+      mockQuery.mockResolvedValueOnce({
+        recordset: [{ useState: 2, userCode: '' }],
+        rowsAffected: [1],
       });
 
       const result = await handler.handle({
@@ -186,13 +188,80 @@ describe('OverdueHandler', () => {
       expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
       expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
       expect(result).toMatchObject({
-        noopReason: expect.stringContaining('not occupied'),
-        areaCode: 'strh00010001',
-        showBoxNo: 1,
-        stgUserId: 'o1',
-        stgUnitId: 'u1',
+        noopReason: expect.stringContaining('DB unit vacant'),
       });
     });
+
+    it('DB userCode 가 rental.ownerId 와 다름 → skip + noopReason="userCode mismatch"', async () => {
+      setupMocks();
+      mockQuery.mockResolvedValueOnce({
+        recordset: [{ useState: 1, userCode: 'differentUser' }],
+        rowsAffected: [1],
+      });
+
+      const result = await handler.handle({
+        type: 'unitRental.markOverdue',
+        data: { unitRentalId: 'r1' },
+      });
+
+      expect(mockTransaction.commit).not.toHaveBeenCalled();
+      expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
+      expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        noopReason: expect.stringContaining('userCode mismatch'),
+      });
+    });
+
+    it('DB row 자체가 없음 → skip + noopReason="DB unit not found"', async () => {
+      setupMocks();
+      mockQuery.mockResolvedValueOnce({ recordset: [], rowsAffected: [0] });
+
+      const result = await handler.handle({
+        type: 'unitRental.markOverdue',
+        data: { unitRentalId: 'r1' },
+      });
+
+      expect(mockTransaction.commit).not.toHaveBeenCalled();
+      expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        noopReason: expect.stringContaining('DB unit not found'),
+      });
+    });
+
+    it.each([
+      ['completed', 'completed'],
+      ['reserved', 'reserved'],
+      ['pre_completed', 'pre_completed'],
+      ['OCCUPIED 가 아닌 대문자 변형', 'Completed'],
+    ])(
+      'rental.state=%s → 자동 오버락 skip + noopReason 반환',
+      async (_label, state) => {
+        setupMocks();
+        mockSgApi.getUnitRental.mockResolvedValue({
+          id: 'r1',
+          unitId: 'u1',
+          ownerId: 'o1',
+          state,
+        });
+
+        const result = await handler.handle({
+          type: 'unitRental.markOverdue',
+          data: { unitRentalId: 'r1' },
+        });
+
+        expect(mockTransaction.commit).not.toHaveBeenCalled();
+        expect(mockSgApi.updateUnitRental).not.toHaveBeenCalled();
+        expect(insertBoxHistorySnapshot).not.toHaveBeenCalled();
+        expect(setPtiUserEnableAllForGroup).not.toHaveBeenCalled();
+        expect(result).toMatchObject({
+          noopReason: expect.stringContaining('not occupied'),
+          areaCode: 'strh00010001',
+          showBoxNo: 1,
+          stgUserId: 'o1',
+          stgUnitId: 'u1',
+        });
+      },
+    );
 
     it('rental.state 누락 → 자동 오버락 skip + noopReason="missing"', async () => {
       setupMocks();

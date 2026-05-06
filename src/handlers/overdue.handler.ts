@@ -58,7 +58,11 @@ export class OverdueHandler implements WebhookHandler {
     // user 는 필요한 순간에 재사용 — parse 실패 분기에서도 userName 을 대시보드에 남길 수 있도록
     // 여기서 먼저 조회한다. 실패 시 userName 없이 진행 (에러 대신 조용히 skip).
     let user;
-    try { user = await this.sgApi.getUser(ownerId); } catch { user = undefined; }
+    try {
+      user = await this.sgApi.getUser(ownerId);
+    } catch {
+      user = undefined;
+    }
     const { userPhone, userName } = user
       ? extractUserInfo(user)
       : { userPhone: '', userName: undefined };
@@ -66,7 +70,12 @@ export class OverdueHandler implements WebhookHandler {
     if (!parsed) {
       const reason = `smartcube_id missing or invalid for unitId ${unitId} (rentalId ${rentalId})`;
       this.logger.warn(`[markOverdue] ${reason} — skipping`);
-      return { softError: reason, stgUserId: ownerId, stgUnitId: unitId, userName };
+      return {
+        softError: reason,
+        stgUserId: ownerId,
+        stgUnitId: unitId,
+        userName,
+      };
     }
     const { areaCode, showBoxNo } = parsed;
 
@@ -77,7 +86,9 @@ export class OverdueHandler implements WebhookHandler {
       typeof rental.state === 'string' ? rental.state.trim().toLowerCase() : '';
     if (rentalState !== 'occupied') {
       const reason = `rental state='${rentalState || 'missing'}' (not occupied) — auto-overlock skipped`;
-      this.logger.log(`[markOverdue] ${reason} — rentalId=${rentalId} unitId=${unitId}`);
+      this.logger.log(
+        `[markOverdue] ${reason} — rentalId=${rentalId} unitId=${unitId}`,
+      );
       return {
         noopReason: reason,
         areaCode,
@@ -90,6 +101,66 @@ export class OverdueHandler implements WebhookHandler {
 
     const transaction = await this.db.beginTransaction();
     try {
+      // DB 측 공실/사용자 매칭 가드 — STG 의 rental.state 가 'occupied' 라고 응답해도
+      // 우리 DB 가 그 rental 의 unit 을 이미 비웠거나 다른 사용자 점유로 바뀐 경우엔
+      // 자동 오버락을 박으면 안 된다. 박으면 그 isOverlocked=1 비트가 다음 사용자
+      // 입주 시 blockerCheck 를 false-positive 로 hit 시켜 그룹 PTI 가 차단된다
+      // (Park, Gyong jin 2026-05-04 케이스. 04-29 에 퇴거된 rental 에 05-01 markOverdue
+      // 가 발사돼 1305 에 isOverlocked=1 잔존 → 05-04 신규 사용자 move-in 시 폭발).
+      const dbState = await new sql.Request(transaction)
+        .input('areaCode', sql.NVarChar, areaCode)
+        .input('showBoxNo', sql.Int, showBoxNo)
+        .query<{ useState: number; userCode: string }>(
+          `SELECT ISNULL(useState, 0) AS useState, ISNULL(userCode, '') AS userCode
+           FROM tblBoxMaster WHERE areaCode = @areaCode AND showBoxNo = @showBoxNo`,
+        );
+      const dbRow = dbState.recordset[0];
+      if (!dbRow) {
+        await safeRollback(transaction);
+        const reason = `DB unit not found ${areaCode}:${showBoxNo} — auto-overlock skipped`;
+        this.logger.warn(`[markOverdue] ${reason} — rentalId=${rentalId}`);
+        return {
+          noopReason: reason,
+          areaCode,
+          showBoxNo,
+          userName,
+          stgUserId: ownerId,
+          stgUnitId: unitId,
+        };
+      }
+      if (dbRow.useState === 2 || dbRow.userCode === '') {
+        await safeRollback(transaction);
+        // useState=2 는 명시 공실, userCode='' 는 점유 흔적은 있되 사용자 미할당
+        // (이전 사이클의 잔류 / migration 미완료 등). 둘 다 markOverdue 의 대상이
+        // 아니므로 skip 하되 라벨은 분기해 운영 가시성을 높인다.
+        const reason =
+          dbRow.useState === 2
+            ? `DB unit vacant (useState=2) — auto-overlock skipped`
+            : `DB userCode empty (useState=${dbRow.useState}) — auto-overlock skipped`;
+        this.logger.log(`[markOverdue] ${reason} — rentalId=${rentalId}`);
+        return {
+          noopReason: reason,
+          areaCode,
+          showBoxNo,
+          userName,
+          stgUserId: ownerId,
+          stgUnitId: unitId,
+        };
+      }
+      if (dbRow.userCode !== ownerId) {
+        await safeRollback(transaction);
+        const reason = `DB userCode mismatch — rental ownerId=${ownerId} but DB userCode=${dbRow.userCode} — auto-overlock skipped`;
+        this.logger.warn(`[markOverdue] ${reason} — rentalId=${rentalId}`);
+        return {
+          noopReason: reason,
+          areaCode,
+          showBoxNo,
+          userName,
+          stgUserId: ownerId,
+          stgUnitId: unitId,
+        };
+      }
+
       // markOverdue: useState=3, isOverlocked=1 마킹
       // (scheduler worker가 어떠한 경우에도 락을 풀지 못하도록)
       await new sql.Request(transaction)
@@ -162,7 +233,11 @@ export class OverdueHandler implements WebhookHandler {
     const unit = await this.sgApi.getUnit(unitId);
     const parsed = await resolveUnitMapping(this.sgApi, unit);
     let user;
-    try { user = await this.sgApi.getUser(ownerId); } catch { user = undefined; }
+    try {
+      user = await this.sgApi.getUser(ownerId);
+    } catch {
+      user = undefined;
+    }
     const { userPhone, userName } = user
       ? extractUserInfo(user)
       : { userPhone: '', userName: undefined };
@@ -170,7 +245,12 @@ export class OverdueHandler implements WebhookHandler {
     if (!parsed) {
       const reason = `smartcube_id missing or invalid for unitId ${unitId} (rentalId ${rentalId})`;
       this.logger.warn(`[unmarkOverdue] ${reason} — skipping`);
-      return { softError: reason, stgUserId: ownerId, stgUnitId: unitId, userName };
+      return {
+        softError: reason,
+        stgUserId: ownerId,
+        stgUnitId: unitId,
+        userName,
+      };
     }
     const { areaCode, showBoxNo } = parsed;
 
